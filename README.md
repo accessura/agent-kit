@@ -58,8 +58,40 @@ again. To uninstall, remove only `~/.codex/skills/accessura` or
 The FastMCP server exposes 24 namespaced tools, including `payments_readiness`, `bids_place`, `claims_settle`, `claims_pay`, `claims_decrypt`, `claims_deliver`, `seller_payout_bind`, and `seller_signal_reopen`.
 
 ```bash
-pip install mcp httpx cryptography eth-account
-claude mcp add accessura -- python server.py
+python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.5.1"
+claude mcp add accessura -- accessura-mcp
+```
+
+The version tag makes the installation reproducible and installs both the
+`accessura_sdk` Python package and the `accessura-mcp` console command. To
+upgrade, replace `v0.5.1` with a newer published tag and add `--upgrade` to the
+same `pip install` command. To uninstall, run
+`python -m pip uninstall accessura-agent-kit`.
+
+Supported Python versions are 3.9 and newer. Verify an installation without
+making an API call or payment:
+
+```bash
+python -c "from accessura_sdk import BuyerAgent, SellerAgent; print(\"SDK import OK\")"
+python -c "import importlib.metadata as m; print(m.version(\"accessura-agent-kit\"))"
+```
+
+Example `.mcp.json` entry:
+
+```json
+{
+  "mcpServers": {
+    "accessura": {
+      "command": "accessura-mcp",
+      "env": {
+        "ACCESSURA_BASE_URL": "https://worldcup-direct-testnet.accessuraportal.com",
+        "ACCESSURA_API_KEY": "acc_...",
+        "ACCESSURA_PRIVATE_KEY": "0x...",
+        "ACCESSURA_DELIVERY_SECRET": "64-hex-characters"
+      }
+    }
+  }
+}
 ```
 
 Credentials are environment-only:

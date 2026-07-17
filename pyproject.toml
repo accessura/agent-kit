@@ -1,6 +1,6 @@
 [project]
 name = "accessura-agent-kit"
-version = "0.5.0"
+version = "0.5.1"
 description = "Accessura Agent Kit — Skill, MCP server, and Python SDK for buyer and seller agents"
 requires-python = ">=3.9"
 dependencies = [
@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["build", "pytest"]
 
 [project.scripts]
 accessura-mcp = "server:main"
@@ -22,6 +22,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["accessura_sdk"]
+py-modules = ["client_wrapper", "server"]
 
 [project.urls]
-Repository = "https://github.com/factnn/agent-kit"
+Repository = "https://github.com/accessura/agent-kit"
+Issues = "https://github.com/accessura/agent-kit/issues"

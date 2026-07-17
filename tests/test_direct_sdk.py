@@ -311,9 +311,10 @@ def test_seller_managed_encryption_requires_a_separate_delivery_secret():
 
 
 def test_mcp_public_surface_has_one_explicit_payment_action():
-    source = (Path(__file__).parent / "server.py").read_text()
-    wrapper = (Path(__file__).parent / "client_wrapper.py").read_text()
-    sdk = (Path(__file__).parent / "accessura_sdk" / "client.py").read_text()
+    root = Path(__file__).parent.parent
+    source = (root / "server.py").read_text()
+    wrapper = (root / "client_wrapper.py").read_text()
+    sdk = (root / "accessura_sdk" / "client.py").read_text()
     assert '@safe("claims.pay")' in source
     assert '@safe("payments.readiness")' in source
     assert '@safe("seller.signal_reopen")' in source
