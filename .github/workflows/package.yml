@@ -8,6 +8,8 @@ on:
       - "server.py"
       - "pyproject.toml"
       - "scripts/smoke_installed_package.py"
+      - "scripts/check_catalog_parity.py"
+      - "catalog_contract.py"
       - "tests/**"
       - ".github/workflows/package.yml"
       - "README.md"
@@ -45,8 +47,12 @@ jobs:
       - name: Verify console entry point starts over stdio
         working-directory: ${{ runner.temp }}
         run: timeout 10s accessura-mcp < /dev/null
+      - name: Verify pinned publish contract against the public catalog
+        if: matrix.python-version == '3.12'
+        working-directory: ${{ runner.temp }}
+        run: python "$GITHUB_WORKSPACE"/scripts/check_catalog_parity.py
       - name: Run no-money unit tests
         run: |
           python -m pip install pytest
-          pytest -q tests/test_direct_sdk.py
+          pytest -q tests/test_direct_sdk.py tests/test_catalog_contract.py
           python tests/test_sdk_decrypt.py

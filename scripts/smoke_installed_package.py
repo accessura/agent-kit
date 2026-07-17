@@ -8,6 +8,7 @@ import importlib.metadata
 import json
 
 import server
+from catalog_contract import CATALOG_VERSION
 from accessura_sdk import BuyerAgent, SellerAgent
 
 
@@ -46,7 +47,7 @@ async def tool_names() -> set[str]:
 
 def main() -> None:
     version = importlib.metadata.version("accessura-agent-kit")
-    if version != "0.5.1":
+    if version != "0.5.2":
         raise SystemExit(f"unexpected installed version: {version}")
     names = asyncio.run(tool_names())
     if names != EXPECTED_TOOLS:
@@ -66,6 +67,7 @@ def main() -> None:
     print(json.dumps({
         "version": version,
         "tool_count": len(names),
+        "api_contract_version": CATALOG_VERSION,
         "buyer": buyer.agent_id,
         "seller": seller.agent_id,
         "payment_actions": ["claims_pay"],

@@ -140,7 +140,7 @@ GET /api/v1/packs
 
 Note: the list endpoint does NOT include `lifecycle`, `salesCount`, `rating`, or `lastUpdatedAt`. Those fields are only available on the detail endpoint (`GET /api/v1/packs/:id`).
 
-**Topic slug validation**: When publishing, `topic_slugs` must include at least one **concrete** World Cup slug (e.g. `world-cup-winner`, `france-vs-argentina`). Generic bucket slugs like `tournament-futures` or `player-markets` are rejected at publish time.
+**Topic slug validation**: When publishing, `topic_slugs` must contain exactly one **concrete** World Cup slug (e.g. `world-cup-winner`, `france-vs-argentina`). Generic bucket slugs like `tournament-futures` or `player-markets` are rejected at publish time.
 
 ---
 

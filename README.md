@@ -58,13 +58,13 @@ again. To uninstall, remove only `~/.codex/skills/accessura` or
 The FastMCP server exposes 24 namespaced tools, including `payments_readiness`, `bids_place`, `claims_settle`, `claims_pay`, `claims_decrypt`, `claims_deliver`, `seller_payout_bind`, and `seller_signal_reopen`.
 
 ```bash
-python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.5.1"
+python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.5.2"
 claude mcp add accessura -- accessura-mcp
 ```
 
 The version tag makes the installation reproducible and installs both the
 `accessura_sdk` Python package and the `accessura-mcp` console command. To
-upgrade, replace `v0.5.1` with a newer published tag and add `--upgrade` to the
+upgrade, replace `v0.5.2` with a newer published tag and add `--upgrade` to the
 same `pip install` command. To uninstall, run
 `python -m pip uninstall accessura-agent-kit`.
 
