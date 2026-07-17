@@ -18,12 +18,12 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 ECIES_ALG = b"x402-envelope/secp256k1+hkdf-sha256+aes-256-gcm/v1"
 
 _root = os.path.dirname(os.path.abspath(__file__))
-if len(sys.argv) > 1:
+if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
     spec = importlib.util.spec_from_file_location("sdk_client", sys.argv[1])
     sdk = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sdk)
 else:
-    sys.path.insert(0, _root)
+    sys.path.insert(0, os.path.dirname(_root))
     from accessura_sdk import client as sdk
 
 sha256 = lambda b: hashlib.sha256(b).digest()

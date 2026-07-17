@@ -1,0 +1,52 @@
+name: Package MCP and SDK
+
+on:
+  pull_request:
+    paths:
+      - "accessura_sdk/**"
+      - "client_wrapper.py"
+      - "server.py"
+      - "pyproject.toml"
+      - "scripts/smoke_installed_package.py"
+      - "tests/**"
+      - ".github/workflows/package.yml"
+      - "README.md"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clean-install:
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Install wheel outside the source tree
+        working-directory: ${{ runner.temp }}
+        run: python -m pip install "$GITHUB_WORKSPACE"/dist/*.whl
+      - name: Verify SDK import and exact MCP tool surface
+        working-directory: ${{ runner.temp }}
+        run: python "$GITHUB_WORKSPACE"/scripts/smoke_installed_package.py
+      - name: Verify console entry point starts over stdio
+        working-directory: ${{ runner.temp }}
+        run: timeout 10s accessura-mcp < /dev/null
+      - name: Run no-money unit tests
+        run: |
+          python -m pip install pytest
+          pytest -q tests/test_direct_sdk.py
+          python tests/test_sdk_decrypt.py

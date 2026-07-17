@@ -2,19 +2,18 @@
 """Accessura MCP Server — buyer + seller tools for the direct x402 API surface.
 
 Usage:
-    pip install mcp httpx cryptography eth-account
-    ACCESSURA_API_KEY=acc_... python server.py              # stdio (Claude Code)
-    ACCESSURA_API_KEY=acc_... python server.py --http 3000  # HTTP transport
+    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.5.1"
+    ACCESSURA_API_KEY=acc_... accessura-mcp              # stdio (Claude Code)
+    ACCESSURA_API_KEY=acc_... accessura-mcp --http 3000  # HTTP transport
 
 Register with Claude Code:
-    claude mcp add accessura -- python /path/to/server.py
+    claude mcp add accessura -- accessura-mcp
 
 Project .mcp.json:
     {
       "mcpServers": {
         "accessura": {
-          "command": "python",
-          "args": ["scripts/agent-ecosystem/server.py"],
+          "command": "accessura-mcp",
           "env": {
             "ACCESSURA_BASE_URL": "https://worldcup-direct-testnet.accessuraportal.com",
             "ACCESSURA_API_KEY": "acc_...",
