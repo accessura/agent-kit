@@ -2,7 +2,7 @@
 """Accessura MCP Server — buyer + seller tools for the direct x402 API surface.
 
 Usage:
-    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.5.1"
+    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.5.2"
     ACCESSURA_API_KEY=acc_... accessura-mcp              # stdio (Claude Code)
     ACCESSURA_API_KEY=acc_... accessura-mcp --http 3000  # HTTP transport
 
@@ -40,6 +40,7 @@ import json
 import sys
 
 from mcp.server.fastmcp import FastMCP
+from catalog_contract import parse_fields, validate_publish_contract
 
 # ── Server instance ──────────────────────────────────────────────────────
 mcp = FastMCP("accessura-mcp")
@@ -296,16 +297,14 @@ async def packs_get(pack_id: str) -> str:
 async def packs_publish(
     title: str,
     info_type: str,
+    topic_slug: str,
+    fields_json: str,
     summary: str = "",
-    topic_slugs: str = "",
     source_declaration: str = "",
     signal_type: str = "narrative-intel",
     per_call_price: float = 0.15,
     copies: int = 20,
     window_seconds: int = 60,
-    word_count: int = 500,
-    source_url: str = "",
-    language: str = "en",
     preview_lines: str = "",
 ) -> str:
     """Publish a new data pack to the marketplace (seller only, requires auth).
@@ -318,36 +317,34 @@ async def packs_publish(
         title: Hook title (max 200 chars, must not reveal core intel)
         info_type: text, structured, figure, video, or audio
         summary: Why this is valuable — not what it says (max 2000 chars)
-        topic_slugs: Comma-separated Polymarket slugs (e.g. "world-cup-winner,france-vs-spain")
+        topic_slug: Exactly one active concrete Polymarket market slug
+        fields_json: JSON object matching catalog.get publishSchemas for info_type
         source_declaration: Where the intel comes from (max 300 chars)
         signal_type: structured-data or narrative-intel
         per_call_price: Minimum bid price in USDC
         copies: How many buyers can win
         window_seconds: Auction window duration
-        word_count: For text packs — approximate word count
-        source_url: For text packs — source URL
-        language: For text packs — ISO language code
         preview_lines: Comma-separated teaser lines (each max 500 chars, must not reveal intel)
     """
     _require_auth()
     cw = _get_client()
 
-    slugs = [s.strip() for s in topic_slugs.split(",") if s.strip()] if topic_slugs else []
+    fields = parse_fields(fields_json)
+    delivery_format = validate_publish_contract(
+        info_type=info_type, topic_slug=topic_slug, signal_type=signal_type, fields=fields,
+    )
     previews = [p.strip() for p in preview_lines.split(",") if p.strip()] if preview_lines else []
 
     pack_data = {
         "title": title,
         "info_type": info_type,
         "summary": summary,
-        "topic": "worldcup-2026",
-        "topic_slugs": slugs,
+        "topic": topic_slug,
+        "topic_slugs": [topic_slug],
         "source_declaration": source_declaration,
         "preview": previews,
-        "fields": {
-            "word_count": word_count,
-            "source_url": source_url,
-            "language": language,
-        },
+        "fields": fields,
+        "delivery_format": delivery_format,
         "bid_config": {
             "copies": copies,
             "window_seconds": window_seconds,
