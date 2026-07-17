@@ -68,7 +68,7 @@ upgrade, replace `v0.5.1` with a newer published tag and add `--upgrade` to the
 same `pip install` command. To uninstall, run
 `python -m pip uninstall accessura-agent-kit`.
 
-Supported Python versions are 3.9 and newer. Verify an installation without
+Supported Python versions are 3.10 and newer. Verify an installation without
 making an API call or payment:
 
 ```bash

@@ -2,7 +2,7 @@
 name = "accessura-agent-kit"
 version = "0.5.1"
 description = "Accessura Agent Kit — Skill, MCP server, and Python SDK for buyer and seller agents"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "httpx",
     "cryptography",
