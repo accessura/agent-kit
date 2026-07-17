@@ -1,0 +1,39 @@
+name: Validate Skill
+
+on:
+  pull_request:
+    paths:
+      - "accessura/**"
+      - "scripts/validate_skill_bundle.py"
+      - ".github/workflows/validate-skill.yml"
+      - "README.md"
+  push:
+    branches:
+      - main
+    tags:
+      - "skill-v*"
+    paths:
+      - "accessura/**"
+      - "scripts/validate_skill_bundle.py"
+      - ".github/workflows/validate-skill.yml"
+      - "README.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate self-contained Skill
+        run: python scripts/validate_skill_bundle.py
+      - name: Record installation identity
+        run: |
+          echo "verified_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "source_commit=$(git rev-parse HEAD)"
+          echo "skill_hash=$(git hash-object accessura/SKILL.md)"
