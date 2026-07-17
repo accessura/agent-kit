@@ -1,0 +1,21 @@
+[project]
+name = "accessura-sdk"
+version = "0.5.0"
+description = "Python SDK for the Accessura data marketplace — buyer and seller agents with ECIES crypto"
+requires-python = ">=3.9"
+dependencies = [
+    "httpx",
+    "cryptography",
+    "eth-account",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["accessura_sdk"]
+package-dir = { accessura_sdk = "." }
