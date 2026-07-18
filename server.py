@@ -2,7 +2,7 @@
 """Accessura MCP Server — buyer + seller tools for the direct x402 API surface.
 
 Usage:
-    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.5.2"
+    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.6.0"
     ACCESSURA_API_KEY=acc_... accessura-mcp              # stdio (Claude Code)
     ACCESSURA_API_KEY=acc_... accessura-mcp --http 3000  # HTTP transport
 
@@ -40,7 +40,14 @@ import json
 import sys
 
 from mcp.server.fastmcp import FastMCP
-from catalog_contract import parse_fields, validate_publish_contract
+from catalog_contract import (
+    MAX_TOPIC_SLUGS,
+    MIN_TOPIC_SLUGS,
+    normalize_signal_schema,
+    normalize_topic_slugs,
+    parse_fields,
+    validate_publish_contract,
+)
 
 # ── Server instance ──────────────────────────────────────────────────────
 mcp = FastMCP("accessura-mcp")
@@ -194,6 +201,13 @@ async def catalog_get() -> str:
         "signalTypes": data.get("enums", {}).get("signalType", []),
         "deliveryFormats": data.get("enums", {}).get("deliveryFormat", []),
         "settlementRules": data.get("enums", {}).get("settlementRule", []),
+        "topicSlugs": {
+            "minItems": MIN_TOPIC_SLUGS,
+            "maxItems": MAX_TOPIC_SLUGS,
+            "authoritative": True,
+            "serverValidation": "every slug must be an active concrete Polymarket market",
+        },
+        "signalContract": data.get("signalContract", {}),
         "onboardingFlows": list(data.get("flows", {}).keys()) if data.get("flows") else [],
     }
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -297,11 +311,12 @@ async def packs_get(pack_id: str) -> str:
 async def packs_publish(
     title: str,
     info_type: str,
-    topic_slug: str,
+    topic_slugs: list[str],
     fields_json: str,
+    signal_type: str,
+    signal_schema: dict[str, str],
     summary: str = "",
     source_declaration: str = "",
-    signal_type: str = "narrative-intel",
     per_call_price: float = 0.15,
     copies: int = 20,
     window_seconds: int = 60,
@@ -317,10 +332,11 @@ async def packs_publish(
         title: Hook title (max 200 chars, must not reveal core intel)
         info_type: text, structured, figure, video, or audio
         summary: Why this is valuable — not what it says (max 2000 chars)
-        topic_slug: Exactly one active concrete Polymarket market slug
+        topic_slugs: 1-20 unique active concrete Polymarket market slugs
         fields_json: JSON object matching catalog.get publishSchemas for info_type
         source_declaration: Where the intel comes from (max 300 chars)
         signal_type: structured-data or narrative-intel
+        signal_schema: Non-empty object mapping every paid Signal payload field to its type
         per_call_price: Minimum bid price in USDC
         copies: How many buyers can win
         window_seconds: Auction window duration
@@ -330,8 +346,14 @@ async def packs_publish(
     cw = _get_client()
 
     fields = parse_fields(fields_json)
+    normalized_topic_slugs = normalize_topic_slugs(topic_slugs)
+    normalized_signal_schema = normalize_signal_schema(signal_schema)
     delivery_format = validate_publish_contract(
-        info_type=info_type, topic_slug=topic_slug, signal_type=signal_type, fields=fields,
+        info_type=info_type,
+        topic_slugs=normalized_topic_slugs,
+        signal_type=signal_type,
+        signal_schema=normalized_signal_schema,
+        fields=fields,
     )
     previews = [p.strip() for p in preview_lines.split(",") if p.strip()] if preview_lines else []
 
@@ -339,8 +361,8 @@ async def packs_publish(
         "title": title,
         "info_type": info_type,
         "summary": summary,
-        "topic": topic_slug,
-        "topic_slugs": [topic_slug],
+        "topic": normalized_topic_slugs[0],
+        "topic_slugs": normalized_topic_slugs,
         "source_declaration": source_declaration,
         "preview": previews,
         "fields": fields,
@@ -353,6 +375,7 @@ async def packs_publish(
             "settlement_rule": "top_n_pay_as_bid",
         },
         "signal_type": signal_type,
+        "signal_schema": normalized_signal_schema,
     }
 
     data = await cw.publish_pack(pack_data)
@@ -861,7 +884,8 @@ async def seller_flow() -> str:
 2. Call auth_apikey to get your API key (activated in-process immediately)
 3. Ensure ACCESSURA_DELIVERY_SECRET is a dedicated 32-byte hex secret, not the wallet key
 4. Call seller_payout_bind to prove the Base Sepolia payout wallet during proving
-5. Call packs_publish with HOOK-style metadata (entice, don't reveal, stay truthful)
+5. Call packs_publish with 1-20 active concrete topic_slugs, HOOK-style metadata,
+   explicit signal_type, and an independent non-empty signal_schema
 6. Call signals_append with content_text — managed in-process encryption;
    SAVE the returned signal_id and content_b64
 7. Call claims_list with role="seller" to poll for won claims

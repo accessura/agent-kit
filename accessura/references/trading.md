@@ -165,8 +165,8 @@ Content-Type: application/json
   "title": "Time-sensitive match signal",
   "summary": "Why it is useful without revealing the result.",
   "info_type": "text",
-  "topic": "worldcup-2026",
-  "topic_slugs": ["world-cup-winner"],
+  "topic": "world-cup-winner",
+  "topic_slugs": ["world-cup-winner", "world-cup-nation-to-reach-final"],
   "source_declaration": "Seller-declared source",
   "preview": ["Observation method", "Freshness window"],
   "fields": {"word_count":500,"source_url":"https://...","language":"en"},
@@ -177,11 +177,26 @@ Content-Type: application/json
     "per_call_price": 0.15,
     "settlement_rule": "top_n_pay_as_bid"
   },
-  "signal_type": "narrative-intel"
+  "signal_type": "narrative-intel",
+  "signal_schema": {
+    "team": "string",
+    "status": "string",
+    "observed_at": "datetime"
+  }
 }
 ```
 
 `copies: 3` means three winner slots in each round. Do not interpret it as three lifetime copies. Do not include `signals` in this request; append them separately.
+
+`topic_slugs` must contain 1–20 unique active concrete markets. The complete
+array is authoritative; `topic` is only the first-slug compatibility alias.
+Bind only markets the intelligence actually affects because lifecycle uses the
+latest `endDate` across the Pack+Signal topic union.
+
+`fields` and `signal_schema` are separate contracts. `fields` describes the
+text/media/structured delivery container; `signal_schema` describes every paid
+Signal payload in this Pack. Both `signal_type` and a non-empty independent
+`signal_schema` are required for a new biddable Pack.
 
 ### 3. Append encrypted content
 

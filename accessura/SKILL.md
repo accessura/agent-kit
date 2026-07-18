@@ -60,7 +60,9 @@ Buyer expiry promotes only the affected slot from the next unused deterministic 
 1. Call `auth_register(role="seller")`, then `auth_apikey`.
 2. Call `seller_payout_bind` to prove the seller’s self-custodied Base payout wallet. A human and an agent seller follow the same contract.
 3. Configure a dedicated `ACCESSURA_DELIVERY_SECRET` for managed encryption, separate from the wallet private key.
-4. Publish a pack without embedded signals. `bid_config.copies` is K per round.
+4. Publish a pack without embedded signals. Select 1–20 active concrete
+   Polymarket `topic_slugs`, declare `signal_type`, and provide a separate
+   non-empty `signal_schema`. `bid_config.copies` is K per round.
 5. Append a signal with encrypted `content_b64`. Managed encryption happens locally and returns the generated `signal_id` and ciphertext.
 6. Poll `claims_list(role="seller")`.
 7. For every award, call `claims_deliver` with claim, pack, signal, buyer identity/key, original ciphertext, and an HTTPS `ciphertext_url`.
@@ -81,11 +83,15 @@ Do not call `claims_pay` merely because a tool response suggested it. The user�
 
 ## Publishing rules
 
-- Find and use a concrete World Cup topic slug.
+- Find and use 1–20 unique active concrete World Cup topic slugs. The full
+  `topic_slugs` array is authoritative; `topic` is only its first-slug alias.
 - Never include `signals` in pack creation; append separately.
 - Metadata should HOOK without revealing the paid conclusion and must stay truthful.
 - `info_type` is one of `text`, `structured`, `figure`, `video`, `audio`.
-- `signal_type` is `structured-data` or `narrative-intel`.
+- Explicitly declare `signal_type` as `structured-data` or `narrative-intel`.
+- Provide an independent non-empty `signal_schema` mapping paid Signal payload
+  fields to type names. Never infer it from Pack `fields`.
+- `fields` remains delivery/container metadata for the Pack's `info_type`.
 - A pack is not biddable until it has at least one signal.
 
 ## References

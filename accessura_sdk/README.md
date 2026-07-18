@@ -50,13 +50,21 @@ seller.bind_payout_wallet()
 pack = seller.publish_pack(
     title="Time-sensitive match signal",
     info_type="text",
-    topic_slugs=["world-cup-winner"],
+    topic="world-cup-winner",
+    topic_slugs=["world-cup-winner", "world-cup-nation-to-reach-final"],
     source_declaration="Seller-owned observation feed",
-    cadence={"mode": "event_driven"},
-    freshness_seconds=900,
+    fields={"word_count": 500, "language": "en", "source_url": "seller feed"},
+    signal_type="narrative-intel",
+    signal_schema={"team": "string", "status": "string", "observed_at": "datetime"},
     bid_config={"copies": 3, "window_seconds": 60},
 )
 ```
+
+The full 1–20 item `topic_slugs` array is authoritative; `topic` is its
+first-slug compatibility alias. Every slug is verified as an active concrete
+market by the API. `fields` describes the delivery/container metadata, while
+the independent non-empty `signal_schema` describes the paid payload shared by
+every Signal in the Pack. Do not infer one from the other.
 
 In the direct runtime, `copies` is K winner slots per round, not total inventory. Each later round starts with a fresh K.
 

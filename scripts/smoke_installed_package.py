@@ -47,7 +47,7 @@ async def tool_names() -> set[str]:
 
 def main() -> None:
     version = importlib.metadata.version("accessura-agent-kit")
-    if version != "0.5.2":
+    if version != "0.6.0":
         raise SystemExit(f"unexpected installed version: {version}")
     names = asyncio.run(tool_names())
     if names != EXPECTED_TOOLS:
@@ -55,6 +55,11 @@ def main() -> None:
             f"MCP tool mismatch: missing={sorted(EXPECTED_TOOLS - names)}, "
             f"extra={sorted(names - EXPECTED_TOOLS)}"
         )
+    publish = next(tool for tool in asyncio.run(server.mcp.list_tools()) if tool.name == "packs_publish")
+    required = set(publish.inputSchema.get("required", []))
+    expected_publish = {"title", "info_type", "topic_slugs", "fields_json", "signal_type", "signal_schema"}
+    if not expected_publish <= required:
+        raise SystemExit(f"MCP publish contract mismatch: required={sorted(required)}")
     buyer = BuyerAgent("0x" + "11" * 32, base_url="https://worldcup.example")
     seller = SellerAgent(
         "0x" + "22" * 32,

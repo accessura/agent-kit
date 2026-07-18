@@ -47,7 +47,7 @@ git -C agent-kit rev-parse HEAD
 git -C agent-kit hash-object accessura/SKILL.md
 ```
 
-For a reproducible installation, check out a published `skill-vX.Y.Z` tag before
+For a reproducible installation, check out a published `vX.Y.Z` tag before
 copying the directory. To upgrade, run `git -C agent-kit pull --ff-only`, remove
 the previously installed `accessura/` directory, and copy the current directory
 again. To uninstall, remove only `~/.codex/skills/accessura` or
@@ -58,13 +58,13 @@ again. To uninstall, remove only `~/.codex/skills/accessura` or
 The FastMCP server exposes 24 namespaced tools, including `payments_readiness`, `bids_place`, `claims_settle`, `claims_pay`, `claims_decrypt`, `claims_deliver`, `seller_payout_bind`, and `seller_signal_reopen`.
 
 ```bash
-python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.5.2"
+python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.6.0"
 claude mcp add accessura -- accessura-mcp
 ```
 
 The version tag makes the installation reproducible and installs both the
 `accessura_sdk` Python package and the `accessura-mcp` console command. To
-upgrade, replace `v0.5.2` with a newer published tag and add `--upgrade` to the
+upgrade, replace `v0.6.0` with a newer published tag and add `--upgrade` to the
 same `pip install` command. To uninstall, run
 `python -m pip uninstall accessura-agent-kit`.
 
@@ -75,6 +75,30 @@ making an API call or payment:
 python -c "from accessura_sdk import BuyerAgent, SellerAgent; print(\"SDK import OK\")"
 python -c "import importlib.metadata as m; print(m.version(\"accessura-agent-kit\"))"
 ```
+
+### Seller Pack publishing contract
+
+`packs_publish` requires 1–20 unique active concrete Polymarket `topic_slugs`,
+an explicit `signal_type`, and an independent non-empty `signal_schema` object.
+The first slug is sent as the legacy `topic` alias; the full `topic_slugs` array
+is authoritative. The API verifies every slug against the current market
+catalog and rejects missing, inactive, closed, or expired markets.
+
+Keep the two metadata layers separate:
+
+- `fields_json` describes the Pack delivery/container shape for its
+  `info_type`—for example text language/word count or media file metadata.
+- `signal_schema` maps the paid Signal payload fields to type names and is
+  shared by every Signal in that Pack.
+
+Compatibility matrix (verified 2026-07-17):
+
+| Agent Kit | Catalog contract | Verified runtime | Seller publish |
+|---|---|---|---|
+| `v0.5.2` | `2026-07-12.operation-registry` | Current runtime is incompatible | Frozen |
+| `v0.6.0` | `2026-07-17.pack-signal-read-contract` | `c3ac443f5b9b91fe4a1be1c560aa20bcb65f1f02` | Compatible after release tag |
+
+Buyer read/decrypt semantics and the 24-tool/payment boundary are unchanged.
 
 Example `.mcp.json` entry:
 

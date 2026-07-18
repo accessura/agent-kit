@@ -126,6 +126,7 @@ GET /api/v1/packs
     "bidConfig": {"copies": 10, "windowSeconds": 30, "settlementRule": "top_n_pay_as_bid"},
     "stake": 50,
     "signalType": "narrative-intel",
+    "signalSchema": {"status": "string", "observed_at": "datetime"},
     "signals": [{"id": "sig-...", "label": "...", "summary": "...", "observedAt": "..."}],
     "sourceDeclaration": "...",
     "fields": {"word_count": 350, "language": "en", "source_url": "..."}
@@ -140,7 +141,14 @@ GET /api/v1/packs
 
 Note: the list endpoint does NOT include `lifecycle`, `salesCount`, `rating`, or `lastUpdatedAt`. Those fields are only available on the detail endpoint (`GET /api/v1/packs/:id`).
 
-**Topic slug validation**: When publishing, `topic_slugs` must contain exactly one **concrete** World Cup slug (e.g. `world-cup-winner`, `france-vs-argentina`). Generic bucket slugs like `tournament-futures` or `player-markets` are rejected at publish time.
+**Topic slug validation**: When publishing, `topic_slugs` must contain 1–20
+unique **concrete** World Cup slugs (for example `world-cup-winner` and
+`france-vs-argentina`). The full array is authoritative and `topic` is only the
+first-slug compatibility alias. Every slug must exist in the current catalog,
+remain active and open, and have a future `endDate`; generic bucket slugs such
+as `tournament-futures` or `player-markets` are rejected. A Pack/Signal auction
+uses the latest `endDate` across its Pack+Signal topic union, so bind only
+markets the intelligence actually affects rather than the whole catalog.
 
 ---
 
@@ -238,6 +246,17 @@ Required at publish. Determines how the content is indexed and displayed.
 |---|---|---|
 | `structured-data` | Machine-parsable | Stats tables, prediction scores, counts, JSON payloads |
 | `narrative-intel` | Human-readable | Eyewitness reports, tactical analysis, coaching notes, translation |
+
+## Signal payload schema
+
+Every new biddable Pack must declare a top-level non-empty `signalSchema`
+(`signal_schema` in publish requests). It maps each paid Signal payload field
+to a type-name string and is shared by every Signal in that Pack.
+
+`signalSchema` is independent from `fields`: `fields` describes the delivery
+container or media metadata, while `signalSchema` describes the paid payload.
+Historical rows missing either `signalType` or `signalSchema` remain readable
+but cannot append a Signal or open a new round.
 
 ---
 
