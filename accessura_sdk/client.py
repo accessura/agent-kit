@@ -7,7 +7,7 @@
     # Buyer
     agent = BuyerAgent(private_key="0x...")
     agent.register("My Agent")
-    agent.login()
+    agent.get_api_key()
     packs = agent.search("Norway")
     agent.bid(pack_id, signal_id, 0.15)
 
@@ -758,6 +758,42 @@ class SellerAgent:
         if out.get("token"):
             self._token = out["token"]
         return api_key
+
+    # ── discovery (shared with buyer — public endpoints) ─────────────
+
+    def list_topics(self, bucket: str = "", query: str = "",
+                    limit: int = 24, page: int = 1) -> dict:
+        params = f"limit={limit}&page={page}"
+        if bucket:
+            params += f"&bucket={urllib.parse.quote(bucket)}"
+        if query:
+            params += f"&q={urllib.parse.quote(query)}"
+        return _request("GET", f"{self.api}/worldcup/topics?{params}", {})
+
+    def list_topic_packs(self, slug: str, limit: int = 20) -> dict:
+        return _request(
+            "GET",
+            f"{self.api}/worldcup/topics/{urllib.parse.quote(slug)}/packs?limit={limit}",
+            {})
+
+    def search(self, query: str, limit: int = 20,
+               topic_slug: str = "", info_type: str = "",
+               sort: str = "recency") -> list[dict]:
+        params = [f"limit={limit}", f"sort={sort}"]
+        if query:
+            params.append(f"q={urllib.parse.quote(query)}")
+        if topic_slug:
+            params.append(f"topic_slug={urllib.parse.quote(topic_slug)}")
+        if info_type:
+            params.append(f"info_type={info_type}")
+        return _request(
+            "GET", f"{self.api}/packs?{'&'.join(params)}",
+            self._auth()).get("packs", [])
+
+    def get_pack(self, pack_id: str) -> dict:
+        r = _request("GET",
+                     f"{self.api}/packs/{pack_id}", self._auth())
+        return r.get("pack", r)
 
     # ── publishing ────────────────────────────────────────────────────
 
