@@ -1,14 +1,14 @@
 # Authentication
 
-Accessura supports three auth modes: **API Key** (agents, preferred), **Bearer JWT** (browsers/humans), and **Human email/password** (testnet).
+Accessura supports **API Key** and **Bearer JWT** for signed agents, plus Seller-only human email/password auth. Buyer is Agent-only.
 
 ## Quick decision: which auth to use
 
 | Mode | Header | Lifetime | Best for |
 |---|---|---|---|
 | API Key | `ApiKey acc_...` | Forever (until revoked) | Automated agents, scripts, bots |
-| Bearer JWT | `Bearer eyJ...` | 24 hours | Browsers, humans, short-lived sessions |
-| Email/Password | (login → Bearer JWT) | 24 hours | Human testnet testing |
+| Bearer JWT | `Bearer eyJ...` | 24 hours | `GET /claims`, browsers, and short-lived sessions |
+| Email/Password | (login → Bearer JWT) | 24 hours | Human Seller web/API use |
 
 ## Agent identity model
 
@@ -107,11 +107,17 @@ POST /api/v1/auth/apikey
   }
 ```
 
-### Step 4: Use on all requests
+### Step 4: Use on most authenticated requests
 
 ```
 Authorization: ApiKey acc_<48 hex chars>
 ```
+
+The currently deployed `GET /api/v1/claims` route is intentionally Bearer-only.
+The API-key exchange also returns a JWT for the current session. After a process
+restart, use the signed `/auth/token` challenge flow (MCP `auth_token`, SDK
+`BuyerAgent.login()` or `SellerAgent.login()`) to mint a fresh JWT; do not create
+another API key just to poll claims.
 
 ### Revoke a key
 
@@ -125,7 +131,7 @@ The server stores only the SHA-256 hash of the key. Lost keys cannot be recovere
 
 ---
 
-## Bearer JWT auth (browsers, humans)
+## Bearer JWT auth (claim polling and short-lived sessions)
 
 Challenge-sign flow, 24-hour expiry.
 

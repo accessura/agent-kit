@@ -71,7 +71,7 @@ def _request_response(method: str, url: str, headers: dict,
     status/headers instead of treating every non-200 response as an exception.
     """
     h = {"Content-Type": "application/json",
-         "User-Agent": "Accessura-SDK/0.5", **headers}
+         "User-Agent": "Accessura-SDK/0.6", **headers}
     body_bytes = json.dumps(json_body).encode() if json_body is not None else None
     if _get_httpx():
         r = _get_httpx().request(method, url, headers=h, content=body_bytes,
@@ -321,7 +321,9 @@ class BuyerAgent:
     """Secp256k1-keyed buyer agent. EIP-712 auth, full trading lifecycle."""
 
     def __init__(self, private_key: str,
-                 base_url: str = "https://worldcup-direct-testnet.accessuraportal.com"):
+                 base_url: str = "https://worldcup-direct-testnet.accessuraportal.com",
+                 api_key: Optional[str] = None,
+                 token: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
         self.api = f"{self.base_url}/api/v1"
         self.private_key = private_key
@@ -337,8 +339,8 @@ class BuyerAgent:
         self._enc_pub = "0x" + self._enc_priv.public_key().public_bytes(
             serialization.Encoding.X962,
             serialization.PublicFormat.UncompressedPoint).hex()
-        self._token: Optional[str] = None
-        self._api_key: Optional[str] = None
+        self._token = token
+        self._api_key = api_key
 
     def _auth(self) -> dict:
         h = {}
@@ -564,6 +566,13 @@ class BuyerAgent:
         return {**body, "_http_status": status,
                 "_payment_required": headers.get("payment-required")}
 
+    def get_transaction_receipt(self, claim_id: str) -> dict:
+        """Read secret-free direct transaction evidence as a participant."""
+        return _request(
+            "GET",
+            f"{self.api}/transactions/{urllib.parse.quote(claim_id)}/receipt",
+            self._auth())
+
     def pay_claim(self, claim_id: str) -> dict:
         """Sign x402 locally and pay USDC directly to the claim seller."""
         status, _, required = _request_response(
@@ -608,15 +617,6 @@ class BuyerAgent:
     def decrypt(self, broker: dict, ciphertext_b64: str) -> bytes:
         return decrypt_delivery(broker, ciphertext_b64, self.private_key)
 
-    # ── wallet ────────────────────────────────────────────────────────
-
-    # ── orders ────────────────────────────────────────────────────────
-
-    def list_orders(self, limit: int = 20) -> dict:
-        return _request(
-            "GET", f"{self.api}/orders?limit={limit}", self._auth())
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # SellerAgent (EIP-712 self-custody seller)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -626,7 +626,9 @@ class SellerAgent:
 
     def __init__(self, private_key: str,
                  base_url: str = "https://worldcup-direct-testnet.accessuraportal.com",
-                 delivery_secret: Optional[Union[str, bytes]] = None):
+                 delivery_secret: Optional[Union[str, bytes]] = None,
+                 api_key: Optional[str] = None,
+                 token: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
         self.api = f"{self.base_url}/api/v1"
         self.private_key = private_key
@@ -643,8 +645,8 @@ class SellerAgent:
         self._enc_pub = "0x" + self._enc_priv.public_key().public_bytes(
             serialization.Encoding.X962,
             serialization.PublicFormat.UncompressedPoint).hex()
-        self._token: Optional[str] = None
-        self._api_key: Optional[str] = None
+        self._token = token
+        self._api_key = api_key
 
     def _auth(self) -> dict:
         h = {}
@@ -657,7 +659,7 @@ class SellerAgent:
     def _bearer_auth(self) -> dict:
         """Auth for the claim-list route, which is intentionally JWT-only."""
         if not self._token:
-            raise RuntimeError("Bearer token required; run get_api_key() first")
+            raise RuntimeError("Bearer token required; run login() or get_api_key() first")
         return {"Authorization": f"Bearer {self._token}"}
 
     def _require_delivery_secret(self) -> bytes:
@@ -758,6 +760,31 @@ class SellerAgent:
         if out.get("token"):
             self._token = out["token"]
         return api_key
+
+    def login(self) -> None:
+        """Create a fresh wallet-signature Bearer session for claim polling."""
+        from eth_account.messages import encode_typed_data
+
+        result = _request(
+            "POST", f"{self.api}/auth/token", {},
+            {"agent_id": self.agent_id, "action": "challenge"})
+        challenge = result.get("challenge") or {}
+        payload = challenge.get("sign_payload")
+        if not payload:
+            raise RuntimeError(
+                f"auth challenge failed (did register() succeed?): {result.get('error') or result}")
+        primary = payload["primaryType"]
+        typed = encode_typed_data(
+            payload["domain"], {primary: payload["types"][primary]}, payload["message"])
+        signature = _sig_hex(self._account.sign_message(typed).signature)
+        out = _request(
+            "POST", f"{self.api}/auth/token", {},
+            {"agent_id": self.agent_id,
+             "challenge_id": challenge.get("challenge_id"),
+             "signature": signature})
+        if not out.get("token"):
+            raise RuntimeError(f"token exchange failed: {out.get('error') or out}")
+        self._token = out["token"]
 
     # ── publishing ────────────────────────────────────────────────────
 
@@ -861,6 +888,13 @@ class SellerAgent:
             "GET", f"{self.api}/claims?role=seller",
             self._bearer_auth()).get("deliveries", [])
 
+    def get_transaction_receipt(self, claim_id: str) -> dict:
+        """Read secret-free direct transaction evidence as a participant."""
+        return _request(
+            "GET",
+            f"{self.api}/transactions/{urllib.parse.quote(claim_id)}/receipt",
+            self._auth())
+
     def deliver_key_release(self, claim_id: str,
                             buyer_pubkey_hex: str,
                             ciphertext_b64: str,
@@ -898,14 +932,6 @@ class SellerAgent:
                 **({"ciphertext_url": kwargs["ciphertext_url"]}
                    if kwargs.get("ciphertext_url") else {}),
             })
-
-    # ── sales ─────────────────────────────────────────────────────────
-
-    def list_sales(self, limit: int = 20) -> dict:
-        return _request(
-            "GET", f"{self.api}/sales?limit={limit}", self._auth())
-
-    # ── wallet ────────────────────────────────────────────────────────
 
 # ═══════════════════════════════════════════════════════════════════════════
 # HumanBuyer (email/password)

@@ -70,6 +70,16 @@ def _auth_headers() -> dict[str, str]:
     return h
 
 
+def _bearer_auth_headers() -> dict[str, str]:
+    """Bearer auth for the deployed claim-list route, which is JWT-only."""
+    if not TOKEN:
+        raise RuntimeError(
+            "Bearer token required for claims.list. Run auth.token to create a "
+            "fresh in-process session token (or set ACCESSURA_TOKEN)."
+        )
+    return {"Authorization": f"Bearer {TOKEN}"}
+
+
 def _has_auth() -> bool:
     return bool(API_KEY or TOKEN)
 
@@ -123,7 +133,7 @@ async def _req_response(method: str, path: str, *, params: Optional[dict] = None
                         extra_headers: Optional[dict] = None) -> tuple[int, dict, dict[str, Any]]:
     """Protocol-aware HTTP response, retaining x402 402 status and headers."""
     url = f"{BASE_URL}/api/v1{path}"
-    headers = {"User-Agent": "Accessura-MCP/0.5", **_auth_headers(), **(extra_headers or {})}
+    headers = {"User-Agent": "Accessura-MCP/0.6", **_auth_headers(), **(extra_headers or {})}
     if body is not None:
         headers["Content-Type"] = "application/json"
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -255,7 +265,8 @@ async def settle_auction(pack_id: str, signal_id: str) -> dict:
 
 async def list_claims(role: str = "buyer") -> dict:
     params = {"role": "seller"} if role == "seller" else None
-    return await _get("/claims", params)
+    return await _req(
+        "GET", "/claims", params=params, extra_headers=_bearer_auth_headers())
 
 
 async def get_claim_payment(claim_id: str) -> dict:
@@ -263,6 +274,11 @@ async def get_claim_payment(claim_id: str) -> dict:
         "GET", f"/claims/{_quote(claim_id)}/pay")
     return {**data, "_http_status": status,
             "_payment_required": headers.get("payment-required")}
+
+
+async def get_transaction_receipt(claim_id: str) -> dict:
+    """Read the participant-visible direct transaction receipt by claim ID."""
+    return await _get(f"/transactions/{_quote(claim_id)}/receipt")
 
 
 async def pay_claim(claim_id: str) -> dict:
@@ -288,7 +304,7 @@ async def fetch_paid_ciphertext(ciphertext_url: str) -> dict:
             response = await client.get(
                 ciphertext_url,
                 # Seller hosts receive no Accessura API key/JWT.
-                headers={"User-Agent": "Accessura-MCP/0.5"},
+                headers={"User-Agent": "Accessura-MCP/0.6"},
             )
         if response.status_code >= 400:
             raise RuntimeError(f"HTTP {response.status_code} ciphertext fetch: {response.text[:300]}")
@@ -306,16 +322,6 @@ async def deliver_key_release(claim_id: str, platform_broker: dict,
 
 
 # ── Wallet ────────────────────────────────────────────────────────────────
-
-# ── Orders & Sales ────────────────────────────────────────────────────────
-
-async def list_orders(limit: int = 20) -> dict:
-    return await _get("/orders", {"limit": limit})
-
-
-async def list_sales(limit: int = 20) -> dict:
-    return await _get("/sales", {"limit": limit})
-
 
 # ── Auth ──────────────────────────────────────────────────────────────────
 
@@ -392,6 +398,27 @@ async def get_api_key() -> dict:
     if not out.get("api_key"):
         raise RuntimeError(f"apikey exchange failed: {out.get('error') or out}")
     set_credentials(api_key=out["api_key"], token=out.get("token", ""))
+    return out
+
+
+async def get_session_token() -> dict:
+    """Refresh the JWT needed by claims.list without issuing another API key."""
+    account = _account()
+    agent_id = account.address
+    data = await _post("/auth/token", {"agent_id": agent_id, "action": "challenge"})
+    ch = data.get("challenge") or {}
+    payload = ch.get("sign_payload")
+    if not payload:
+        raise RuntimeError(f"token challenge failed: {data.get('error') or data}")
+    signature = _sign_typed_payload(payload)
+    out = await _post("/auth/token", {
+        "agent_id": agent_id,
+        "challenge_id": ch.get("challenge_id"),
+        "signature": signature,
+    })
+    if not out.get("token"):
+        raise RuntimeError(f"token exchange failed: {out.get('error') or out}")
+    set_credentials(token=out["token"])
     return out
 
 

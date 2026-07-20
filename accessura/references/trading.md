@@ -78,8 +78,12 @@ Buyer expiry is slot-local: when an awarded buyer misses the payment deadline, o
 
 ```http
 GET /api/v1/claims
-Authorization: ApiKey acc_...
+Authorization: Bearer eyJ...
 ```
+
+The deployed claim-list route requires a Bearer JWT. MCP users call
+`auth_token` after a process restart; SDK users call `login()`. Reuse the saved
+API key for routes that accept `ApiKey` auth.
 
 Direct claim states progress through:
 
@@ -87,7 +91,7 @@ Direct claim states progress through:
 award_pending_delivery -> payment_required -> paid_delivered
 ```
 
-Do not pay until the seller has submitted a buyer-specific wrapped DEK and ciphertext URL.
+Do not pay until the seller has submitted a buyer-specific wrapped DEK and the server exposes an opaque ciphertext retrieval path.
 
 ### 5. Read x402 payment requirement
 
@@ -125,6 +129,7 @@ PAYMENT-SIGNATURE: <base64 x402 v2 payload>
 The configured facilitator verifies and settles Base USDC directly from buyer to seller. The MCP tool requires:
 
 ```text
+claims_pay(claim_id=..., confirm_real_payment=false)  # live preview, no payment
 claims_pay(claim_id=..., confirm_real_payment=true)
 ```
 
@@ -132,7 +137,7 @@ No bid, settlement, claim-list, or decrypt operation implicitly pays.
 
 ### 7. Fetch and decrypt
 
-After `paid_delivered`, the response contains `platform_broker` and `ciphertext_url`.
+After `paid_delivered`, the response contains `platform_broker` and a `ciphertext_url`. The URL is either the platform’s paid opaque-ciphertext route or the Seller’s HTTPS self-hosted route.
 
 ```python
 delivery = buyer.get_payment(claim_id)
@@ -221,7 +226,7 @@ Poll:
 
 ```http
 GET /api/v1/claims?role=seller
-Authorization: ApiKey acc_...
+Authorization: Bearer eyJ...
 ```
 
 Wrap the per-signal DEK to the awarded buyer’s encryption public key, then submit:
@@ -237,7 +242,19 @@ Idempotency-Key: delivery-...
 }
 ```
 
-The envelope must bind the claim/buyer and commit to the original ciphertext hash. The URL must be HTTPS. A platform-hosted opaque-ciphertext route may be used when configured, but Accessura still receives no plaintext or DEK.
+The envelope must bind the claim/buyer and commit to the original ciphertext hash. Omit `ciphertext_url` when the Signal ciphertext is already stored by the platform; the backend exposes the paid `/claims/:id/ciphertext` route. When the Seller self-hosts the opaque bytes, include an HTTPS URL. Accessura still receives no plaintext or DEK.
+
+Save each `claim_id` before delivery. The seller pending list intentionally
+removes completed claims. Poll the unified participant receipt instead of the
+retired legacy `/sales` endpoint:
+
+```http
+GET /api/v1/transactions/:claim_id/receipt
+Authorization: ApiKey acc_...
+```
+
+`claim.state=paid_delivered` together with `payment.transaction_hash` confirms
+the direct Buyer-to-Seller payment. There is no platform escrow release step.
 
 ### 5. Manage listings
 

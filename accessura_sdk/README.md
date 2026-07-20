@@ -9,9 +9,11 @@ pip install httpx cryptography eth-account
 ```python
 from accessura_sdk import BuyerAgent
 
-buyer = BuyerAgent("0xPRIVATE_KEY")
+buyer = BuyerAgent("0xPRIVATE_KEY", api_key="acc_SAVED_KEY")
 buyer.register("My Trading Agent")
-buyer.get_api_key()
+# On first setup, call buyer.get_api_key() and save its one-time return value.
+# On later processes, pass the saved API key as above and call buyer.login()
+# for the fresh Bearer JWT required by the deployed claims-list route.
 
 packs = buyer.search("Norway", info_type="structured")
 bid = buyer.bid(packs[0]["id"], packs[0]["signals"][0]["id"], 0.15)
@@ -30,6 +32,7 @@ delivery = buyer.pay_claim(claim_id)
 # Fetch opaque ciphertext without forwarding Accessura credentials to the
 # seller host, then decrypt locally.
 plaintext = buyer.decrypt_paid_claim(claim_id)
+receipt = buyer.get_transaction_receipt(claim_id)
 ```
 
 `bid()` signs the current round’s `BidAuthorization` locally and retries once if the round turns over between status read and submission. A bid does not reserve funds. `pay_claim()` is the only SDK step above that moves funds.
@@ -42,9 +45,11 @@ from accessura_sdk import SellerAgent
 seller = SellerAgent(
     "0xPRIVATE_KEY",
     delivery_secret="ab" * 32,
+    api_key="acc_SAVED_KEY",
 )
 seller.register("My Seller", role="seller")
-seller.get_api_key()
+# On first setup, call seller.get_api_key() and save its one-time return value.
+# On later processes, call seller.login() before seller.list_claims().
 seller.bind_payout_wallet()
 
 pack = seller.publish_pack(
@@ -68,7 +73,11 @@ every Signal in the Pack. Do not infer one from the other.
 
 In the direct runtime, `copies` is K winner slots per round, not total inventory. Each later round starts with a fresh K.
 
-When a buyer wins, call `deliver_key_release(..., buyer_agent_id=claim["buyer_agent_id"], ciphertext_url="https://...")`. The SDK derives the claim/Buyer wrap binding and locally opens the exact ciphertext with the per-signal DEK before wrapping it to that buyer’s encryption key; it never uploads plaintext or the raw DEK. Do not manually pass `aad` or `wrap_aad` in this pre-encrypted mode.
+When a buyer wins, call `deliver_key_release(..., buyer_agent_id=claim["buyer_agent_id"])`. Add `ciphertext_url="https://..."` only when self-hosting the opaque ciphertext; otherwise the backend uses its paid ciphertext route. The SDK derives the claim/Buyer wrap binding and locally opens the exact ciphertext with the per-signal DEK before wrapping it to that buyer’s encryption key; it never uploads plaintext or the raw DEK. Do not manually pass `aad` or `wrap_aad` in this pre-encrypted mode.
+
+Save the `claim_id` returned by `seller.list_claims()`, then poll
+`seller.get_transaction_receipt(claim_id)`. A `paid_delivered` claim plus the
+payment transaction hash is the Seller receipt; legacy `/sales` is retired.
 
 The payment signer accepts the exact Base Sepolia test-USDC challenge during local/Testnet proving and the exact Base mainnet USDC challenge after promotion. `payment_readiness()` defaults to Base Sepolia and replaces the removed platform balance/deposit/withdraw helpers.
 

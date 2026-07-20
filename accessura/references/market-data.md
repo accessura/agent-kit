@@ -124,14 +124,13 @@ GET /api/v1/packs
     "preview": ["...", "..."],
     "publishedAt": "ISO timestamp",
     "bidConfig": {"copies": 10, "windowSeconds": 30, "settlementRule": "top_n_pay_as_bid"},
-    "stake": 50,
     "signalType": "narrative-intel",
     "signalSchema": {"status": "string", "observed_at": "datetime"},
     "signals": [{"id": "sig-...", "label": "...", "summary": "...", "observedAt": "..."}],
     "sourceDeclaration": "...",
     "fields": {"word_count": 350, "language": "en", "source_url": "..."}
   }],
-  "total": 39,
+  "total": 2,
   "page": 1,
   "limit": 20,
   "sort": "recency",
@@ -163,9 +162,9 @@ Returns the full public pack object including everything from the list response,
 - `lifecycle` — current state machine status (only on detail):
   - `pack_availability`: `"live"` | `"delisted"` | ...
   - `bid_window_state`: `"open"` | `"closed"` | ...
-  - `payment_state`: `"not_paid"` | `"held"` | `"held_awaiting_key_release"` | `"released"` | ...
-  - `delivery_state`: `"not_available"` | `"pending"` | `"delivered"` | ...
-  - `dispute_state`: `"none"` | ...
+  - `payment_state`: public Pack lifecycle remains `"not_paid"`; per-award direct payment state lives in claims/transaction receipts
+  - `delivery_state`: public Pack lifecycle remains `"not_available"`; buyer-specific opaque delivery state lives in claims/transaction receipts
+  - `dispute_state`: `"none"` in the no-HOLD launch flow
   - `close_reason`: `null` | `"settled"` | `"expired"` | ...
   - `allowed_actions`: `["bid"]` | `["settle"]` | ...
 
