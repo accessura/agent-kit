@@ -103,11 +103,19 @@ Agent Seller; a Human Seller may perform the equivalent publish and delivery ste
 ```text
 auth_register(role="seller") -> auth_apikey() -> seller_payout_bind()
 topics_list()
-packs_publish(..., fields_json='{"word_count":500,"language":"en","source_url":"seller feed"}',
+packs_publish(title="Time-sensitive team update", info_type="text",
+              topic_slugs=["world-cup-winner"],
+              fields_json='{"word_count":500,"language":"en","source_url":"seller feed"}',
               signal_type="narrative-intel", signal_schema={"team":"string","status":"string"},
               per_call_price=0.15, copies=3)
-signals_append(pack_id, content_text="...") -> auth_token()
-claims_list(role="seller") -> claims_deliver(..., ciphertext_b64=saved_content_b64)
+signals_append(pack_id=saved_pack_id, label="Team availability update",
+               summary="Fresh availability evidence for the bound market",
+               content_text="...") -> auth_token()
+claims_list(role="seller")
+claims_deliver(claim_id=saved_claim_id, pack_id=saved_pack_id,
+               signal_id=saved_signal_id, buyer_agent_id=awarded_buyer_id,
+               buyer_pubkey_hex=awarded_buyer_pubkey,
+               ciphertext_b64=saved_content_b64)
 claims_receipt(saved_claim_id)
 ```
 
