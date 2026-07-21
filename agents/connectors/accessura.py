@@ -1,11 +1,11 @@
 """
-Accessura connector — fetch structured sports intelligence packs
-from the Accessura data marketplace for use as Polymarket agent signal inputs.
+Accessura connector — fetch Politics and Sports intelligence Packs from the
+Accessura data marketplace for use as Polymarket agent signal inputs.
 
 Usage:
     from agents.connectors.accessura import Accessura
     accessura = Accessura()
-    articles = accessura.get_articles_for_cli_keywords("Haaland,Norway,England")
+    articles = accessura.get_articles_for_cli_keywords("policy,election,injury")
 """
 
 import os
@@ -15,7 +15,7 @@ from agents.utils.objects import Article, Source
 
 
 class Accessura:
-    """Connector for the Accessura World Cup data marketplace.
+    """Connector for the Accessura Politics and Sports data marketplace.
 
     Fetches structured packs (text reports, match statistics, photos, video/audio)
     published by automated crawlers and institutional sellers. Each pack-signal
@@ -25,7 +25,7 @@ class Accessura:
 
     def __init__(self) -> None:
         self.base_url = os.getenv(
-            "ACCESSURA_BASE_URL", "https://worldcup-direct-testnet.accessuraportal.com"
+            "ACCESSURA_BASE_URL", "https://testnet.accessura.io"
         )
         self.api_base = f"{self.base_url}/api/v1"
         # Bearer token from agent registration + challenge login.

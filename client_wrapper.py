@@ -7,7 +7,7 @@ Crypto layer: reuses the canonical accessura_sdk implementation
 src/lib/crypto/ecies.ts sellerWrapDek byte-for-byte on the seller side.
 
 Credentials come from environment variables only — never from tool arguments:
-    ACCESSURA_BASE_URL     API host (default: https://worldcup-direct-testnet.accessuraportal.com)
+    ACCESSURA_BASE_URL     API host (default: https://testnet.accessura.io)
     ACCESSURA_API_KEY      "acc_..." API key  -> Authorization: ApiKey ...
     ACCESSURA_TOKEN        JWT               -> Authorization: Bearer ...
     ACCESSURA_PRIVATE_KEY  secp256k1 private key hex. Used in-process for
@@ -40,7 +40,7 @@ from accessura_sdk.client import (
     _sign_x402_payment,
 )
 
-BASE_URL = os.getenv("ACCESSURA_BASE_URL", "https://worldcup-direct-testnet.accessuraportal.com").rstrip("/")
+BASE_URL = os.getenv("ACCESSURA_BASE_URL", "https://testnet.accessura.io").rstrip("/")
 API_KEY = os.getenv("ACCESSURA_API_KEY", "")
 TOKEN = os.getenv("ACCESSURA_TOKEN", "")
 PRIVATE_KEY = os.getenv("ACCESSURA_PRIVATE_KEY", "")
@@ -150,17 +150,17 @@ def _quote(s: str) -> str:
 
 # ── Discovery (no auth) ───────────────────────────────────────────────────
 
-async def list_topics(bucket: str = "", query: str = "", limit: int = 24, page: int = 1) -> dict:
-    params: dict[str, Any] = {"limit": limit, "page": page}
-    if bucket:
-        params["bucket"] = bucket
-    if query:
-        params["q"] = query
-    return await _get("/worldcup/topics", params)
+async def list_topics(category: str = "", sector: str = "", state: str = "active") -> dict:
+    params: dict[str, Any] = {"state": state}
+    if category:
+        params["category"] = category
+    if sector:
+        params["sector"] = sector
+    return await _get("/topics", params)
 
 
-async def list_topic_packs(slug: str, limit: int = 20) -> dict:
-    return await _get(f"/worldcup/topics/{_quote(slug)}/packs", {"limit": limit})
+async def list_topic_packs(slug: str, state: str = "all") -> dict:
+    return await _get(f"/topics/{_quote(slug)}/packs", {"state": state})
 
 
 async def get_catalog() -> dict:
@@ -195,10 +195,6 @@ async def publish_pack(pack_data: dict) -> dict:
 
 async def delist_pack(pack_id: str) -> dict:
     return await _post(f"/packs/{_quote(pack_id)}/delist")
-
-
-async def relist_pack(pack_id: str) -> dict:
-    return await _post(f"/packs/{_quote(pack_id)}/relist")
 
 
 async def reopen_signal_settlement(pack_id: str, signal_id: str) -> dict:

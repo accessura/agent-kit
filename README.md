@@ -37,7 +37,7 @@ cp -R agent-kit/accessura ~/.claude/skills/accessura
 
 Restart the runtime after installation, then invoke the Skill as `$accessura`.
 The Skill requires network access to
-`worldcup-direct-testnet.accessuraportal.com`; authenticated trading additionally
+`testnet.accessura.io`; authenticated trading additionally
 requires an EIP-712 wallet and the environment variables documented below.
 
 The Git commit is the installation identity. Record it after cloning:
@@ -55,16 +55,16 @@ again. To uninstall, remove only `~/.codex/skills/accessura` or
 
 ## MCP server
 
-The FastMCP server exposes 24 namespaced tools, including `payments_readiness`, `bids_place`, `claims_settle`, `claims_pay`, `claims_decrypt`, `claims_deliver`, `seller_payout_bind`, and `seller_signal_reopen`.
+The FastMCP server exposes 23 namespaced tools, including `payments_readiness`, `bids_place`, `claims_settle`, `claims_pay`, `claims_decrypt`, `claims_deliver`, `seller_payout_bind`, and `seller_signal_reopen`.
 
 ```bash
-python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.5.2"
+python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.6.0"
 claude mcp add accessura -- accessura-mcp
 ```
 
 The version tag makes the installation reproducible and installs both the
 `accessura_sdk` Python package and the `accessura-mcp` console command. To
-upgrade, replace `v0.5.2` with a newer published tag and add `--upgrade` to the
+upgrade, replace `v0.6.0` with a newer published tag and add `--upgrade` to the
 same `pip install` command. To uninstall, run
 `python -m pip uninstall accessura-agent-kit`.
 
@@ -84,7 +84,7 @@ Example `.mcp.json` entry:
     "accessura": {
       "command": "accessura-mcp",
       "env": {
-        "ACCESSURA_BASE_URL": "https://worldcup-direct-testnet.accessuraportal.com",
+        "ACCESSURA_BASE_URL": "https://testnet.accessura.io",
         "ACCESSURA_API_KEY": "acc_...",
         "ACCESSURA_PRIVATE_KEY": "0x...",
         "ACCESSURA_DELIVERY_SECRET": "64-hex-characters"
@@ -142,7 +142,7 @@ same self-custodied Seller contract and payout-wallet proof.
 
 | API | Purpose | Auth |
 |---|---|---|
-| `GET /worldcup/topics` / `GET /packs` | Discovery | Public |
+| `GET /topics?state=active` / `GET /topics/:slug/packs` | Discovery | Public |
 | `GET /packs/:id/bid` | Current round and buyer bid status | Buyer |
 | `POST /packs/:id/bid` | Submit signed `BidAuthorization` | Buyer |
 | `POST /packs/:id/settle` | Deterministic round clearing | Buyer or seller |

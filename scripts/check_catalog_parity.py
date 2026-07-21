@@ -8,7 +8,7 @@ from catalog_contract import CATALOG_VERSION, assert_catalog_parity
 
 
 async def main():
-    base = os.getenv("ACCESSURA_BASE_URL", "https://worldcup-direct-testnet.accessuraportal.com").rstrip("/")
+    base = os.getenv("ACCESSURA_BASE_URL", "https://testnet.accessura.io").rstrip("/")
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(f"{base}/api/v1/catalog")
         response.raise_for_status()

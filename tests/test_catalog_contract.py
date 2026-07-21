@@ -1,40 +1,59 @@
 import asyncio
-import json
+import copy
 
 import pytest
 
 import server
-from catalog_contract import parse_fields, validate_publish_contract
+from catalog_contract import (
+    CATALOG_VERSION,
+    DELIVERY_FORMATS,
+    INFO_TYPES,
+    REQUIRED_FIELDS,
+    SIGNAL_CONTRACT,
+    SIGNAL_TYPES,
+    assert_catalog_parity,
+)
 
 
-@pytest.mark.parametrize("info_type,fields", [
-    ("structured", {"schema_version": "1.0", "columns": ["player", "status"]}),
-    ("structured", {"schema_version": "1.0", "json_schema": {"odds": "number"}}),
-    ("structured", {"schema_version": "1.0", "tables": [{"name": "x", "columns": ["id"]}]}),
-    ("text", {"word_count": 10, "language": "en", "source_url": "seller note"}),
-    ("figure", {"source_hash": "sha256:x", "resolution": "1x1", "capture_time": "2026-01-01T00:00:00Z", "media_type": "image/png", "file_name": "x.png", "file_size_bytes": 1, "preview_description": "preview", "verification_notes": "hash"}),
-    ("video", {"duration": "00:01", "resolution": "1x1", "source_hash": "sha256:x", "media_type": "video/mp4", "file_name": "x.mp4", "file_size_bytes": 1, "preview_description": "preview", "verification_notes": "hash"}),
-    ("audio", {"duration": "00:01", "format": "audio/mpeg", "source_hash": "sha256:x", "media_type": "audio/mpeg", "file_name": "x.mp3", "file_size_bytes": 1, "preview_description": "preview", "verification_notes": "hash"}),
+def pinned_catalog():
+    return {
+        "version": CATALOG_VERSION,
+        "enums": {
+            "infoType": list(INFO_TYPES),
+            "signalType": list(SIGNAL_TYPES),
+        },
+        "publishSchemas": {
+            info_type: {
+                "deliveryFormat": DELIVERY_FORMATS[info_type],
+                "requiredFields": list(REQUIRED_FIELDS[info_type]),
+            }
+            for info_type in INFO_TYPES
+        },
+        "signalContract": dict(SIGNAL_CONTRACT),
+    }
+
+
+def test_pinned_catalog_passes_parity():
+    assert_catalog_parity(pinned_catalog())
+
+
+@pytest.mark.parametrize("mutate,expected", [
+    (lambda c: c.update(version="2026-07-12.operation-registry"), "version"),
+    (lambda c: c["enums"].update(signalType=["structured-data"]), "signalType enum drift"),
+    (lambda c: c["publishSchemas"]["text"].update(requiredFields=["word_count"]), "text.requiredFields drift"),
+    (lambda c: c["publishSchemas"]["structured"].update(deliveryFormat="csv"), "structured.deliveryFormat drift"),
+    (lambda c: c["signalContract"].update(schemaField="fields"), "signalContract.schemaField drift"),
 ])
-def test_all_catalog_publish_shapes(info_type, fields):
-    assert validate_publish_contract(info_type=info_type, topic_slug="world-cup-winner", signal_type="structured-data", fields=fields)
+def test_catalog_drift_is_detected(mutate, expected):
+    catalog = copy.deepcopy(pinned_catalog())
+    mutate(catalog)
+    with pytest.raises(RuntimeError, match=expected):
+        assert_catalog_parity(catalog)
 
 
-def test_multiple_topics_are_rejected_and_stale_fields_are_not_required():
-    fields = {"word_count": 10, "language": "en", "source_url": "source"}
-    with pytest.raises(RuntimeError, match="one active concrete"):
-        validate_publish_contract(info_type="text", topic_slug="one,two", signal_type="narrative-intel", fields=fields)
-    assert "cadence" not in fields and "freshness_seconds" not in fields
-
-
-def test_mcp_publish_schema_exposes_single_slug_and_generic_fields():
+def test_mcp_publish_schema_matches_signal_contract():
     publish = next(tool for tool in asyncio.run(server.mcp.list_tools()) if tool.name == "packs_publish")
     properties = publish.inputSchema["properties"]
-    assert "topic_slug" in properties and "topic_slugs" not in properties
-    assert "fields_json" in properties
-    assert {"title", "info_type", "topic_slug", "fields_json"} <= set(publish.inputSchema["required"])
-
-
-def test_fields_json_must_be_an_object():
-    with pytest.raises(RuntimeError, match="JSON object"):
-        parse_fields(json.dumps(["not", "an", "object"]))
+    assert "topic_slugs" in properties and "topic_slug" not in properties
+    assert "signal_schema" in properties and "fields_json" not in properties
+    assert {"title", "info_type", "signal_type", "signal_schema"} <= set(publish.inputSchema["required"])

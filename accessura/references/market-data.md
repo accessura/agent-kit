@@ -6,65 +6,47 @@ Discovering markets, searching packs, and understanding data types.
 
 ## Topic discovery
 
-All markets are Polymarket-linked World Cup topics. Start here to find what's tradable.
+Active discovery uses current Polymarket-linked Politics and Sports Topics.
+Start here to find the concrete market scope for a Pack.
 
 ```
-GET /api/v1/worldcup/topics
+GET /api/v1/topics?state=active
 ```
 
 **Query params:**
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `bucket` | string | - | Filter by category bucket |
-| `q` / `query` | string | - | Case-insensitive search across title, slug, bucket, tags |
-| `limit` | integer | 24 | Positive integer |
-| `page` | integer | 1 | 1-indexed |
-
-**Topic buckets** (filter with `?bucket=...`):
-
-- Tournament futures
-- Group futures
-- Stage markets
-- Team props
-- Player markets
-- Player H2H
-- Awards
-- Records
-- Continental
-- Culture & mentions
-- Other World Cup topics
+| `state` | string | `active` | `active` or retained `past` Topics |
+| `category` | string | - | Optional `politics` or `sports` filter |
+| `sector` | string | - | Optional stable Sector slug |
 
 **Response:**
 ```json
 {
   "topics": [{
-    "id": "30615",
-    "title": "World Cup Winner",
-    "slug": "world-cup-winner",
+    "id": "source-topic-id",
+    "title": "Will the policy proposal pass?",
+    "slug": "will-the-policy-proposal-pass",
     "volume": 4255885903.87,
     "volume24hr": 29345324.51,
     "liquidity": 5689233.84,
     "marketCount": 60,
-    "tags": ["Sports", "Soccer", "2026 FIFA World Cup", "Tournament Futures"],
-    "bucket": "Tournament futures",
-    "polymarketUrl": "https://polymarket.com/event/world-cup-winner",
-    "endDate": "2026-07-20T00:00:00Z",
-    "closed": false
+    "tags": ["Politics"],
+    "category": "politics",
+    "sectorSlugs": ["policy-signals"],
+    "polymarketUrl": "https://polymarket.com/event/will-the-policy-proposal-pass",
+    "endDate": "2026-08-20T00:00:00Z",
+    "closed": false,
+    "state": "active"
   }],
-  "total": 61,
-  "page": 1,
-  "limit": 24,
-  "q": null,
-  "hasMore": true,
+  "total": 1,
+  "state": "active",
+  "category": null,
+  "sector": null,
   "fetchedAt": "2026-07-15T19:26:38Z",
   "cacheStale": false,
-  "source": {
-    "provider": "polymarket_gamma",
-    "tagId": "102350",
-    "tagLabel": "2026 FIFA World Cup",
-    "url": "https://gamma-api.polymarket.com/events?tag_id=102350"
-  },
+  "source": {"archiveMode": false},
   "error": null
 }
 ```
@@ -78,13 +60,13 @@ Pick the `slug` of your target market, then search for packs on it.
 ### By topic (recommended)
 
 ```
-GET /api/v1/worldcup/topics/:slug/packs
+GET /api/v1/topics/:slug/packs?state=all
 ```
 
 Returns all packs matched to a Polymarket topic slug plus the topic metadata:
 ```json
 {
-  "topicSlug": "world-cup-winner",
+  "topic": {"slug": "will-the-policy-proposal-pass", "category": "politics"},
   "topic": { /* Polymarket topic object */ },
   "packs": [{ "id": "pack-...", "title": "...", "matchReason": "..." }],
   "total": 5
@@ -120,7 +102,7 @@ GET /api/v1/packs
     "sellerId": "0x...",
     "pricing": {"perCallPrice": 1},
     "deliveryFormat": "markdown",
-    "topicSlugs": ["world-cup-winner"],
+    "topicSlugs": ["will-the-policy-proposal-pass"],
     "preview": ["...", "..."],
     "publishedAt": "ISO timestamp",
     "bidConfig": {"copies": 10, "windowSeconds": 30, "settlementRule": "top_n_pay_as_bid"},
@@ -140,7 +122,9 @@ GET /api/v1/packs
 
 Note: the list endpoint does NOT include `lifecycle`, `salesCount`, `rating`, or `lastUpdatedAt`. Those fields are only available on the detail endpoint (`GET /api/v1/packs/:id`).
 
-**Topic slug validation**: When publishing, `topic_slugs` must contain exactly one **concrete** World Cup slug (e.g. `world-cup-winner`, `france-vs-argentina`). Generic bucket slugs like `tournament-futures` or `player-markets` are rejected at publish time.
+**Topic slug validation**: When publishing, `topic_slugs` must include at least
+one concrete current Politics or Sports Topic slug. Category and Sector slugs
+are navigation filters and are rejected as Pack bindings.
 
 ---
 

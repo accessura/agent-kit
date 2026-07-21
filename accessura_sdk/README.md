@@ -48,12 +48,10 @@ seller.get_api_key()
 seller.bind_payout_wallet()
 
 pack = seller.publish_pack(
-    title="Time-sensitive match signal",
+    title="Time-sensitive market signal",
     info_type="text",
-    topic_slugs=["world-cup-winner"],
-    source_declaration="Seller-owned observation feed",
-    cadence={"mode": "event_driven"},
-    freshness_seconds=900,
+    topic_slugs=["<current-politics-or-sports-topic-slug>"],
+    source_declaration="Seller-owned observation feed",  # optional
     bid_config={"copies": 3, "window_seconds": 60},
 )
 ```

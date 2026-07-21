@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-CATALOG_VERSION = "2026-07-12.operation-registry"
+CATALOG_VERSION = "2026-07-17.pack-signal-read-contract"
 INFO_TYPES = ("structured", "text", "figure", "video", "audio")
 SIGNAL_TYPES = ("structured-data", "narrative-intel")
 DELIVERY_FORMATS = {"structured": "json", "text": "markdown", "figure": "image", "video": "video", "audio": "audio"}
@@ -16,35 +15,11 @@ REQUIRED_FIELDS = {
     "video": ("duration", "resolution", "source_hash", "media_type", "file_name", "file_size_bytes", "preview_description", "verification_notes"),
     "audio": ("duration", "format", "source_hash", "media_type", "file_name", "file_size_bytes", "preview_description", "verification_notes"),
 }
-
-
-def parse_fields(fields_json: str) -> dict[str, Any]:
-    try:
-        fields = json.loads(fields_json)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"fields_json must be valid JSON: {exc.msg}") from exc
-    if not isinstance(fields, dict):
-        raise RuntimeError("fields_json must decode to a JSON object")
-    return fields
-
-
-def validate_publish_contract(*, info_type: str, topic_slug: str, signal_type: str, fields: dict[str, Any]) -> str:
-    if info_type not in INFO_TYPES:
-        raise RuntimeError(f"info_type must be one of: {', '.join(INFO_TYPES)}")
-    if not topic_slug.strip() or "," in topic_slug:
-        raise RuntimeError("topic_slug must be one active concrete market slug (not a list)")
-    if signal_type not in SIGNAL_TYPES:
-        raise RuntimeError(f"signal_type must be one of: {', '.join(SIGNAL_TYPES)}")
-    missing = [name for name in REQUIRED_FIELDS[info_type] if fields.get(name) in (None, "")]
-    if missing:
-        raise RuntimeError(f"fields_json missing required {info_type} fields: {', '.join(missing)}")
-    if info_type == "structured":
-        descriptors = sum(key in fields for key in ("columns", "json_schema", "tables")) + int("request_schema" in fields or "response_schema" in fields)
-        if descriptors != 1:
-            raise RuntimeError("structured fields require exactly one shape: columns, json_schema, tables, or request_schema + response_schema")
-        if ("request_schema" in fields) != ("response_schema" in fields):
-            raise RuntimeError("endpoint shape requires both request_schema and response_schema")
-    return DELIVERY_FORMATS[info_type]
+SIGNAL_CONTRACT = {
+    "requiredForBiddablePacks": True,
+    "schemaField": "signal_schema",
+    "typeField": "signal_type",
+}
 
 
 def assert_catalog_parity(catalog: dict[str, Any]) -> None:
@@ -63,5 +38,9 @@ def assert_catalog_parity(catalog: dict[str, Any]) -> None:
             errors.append(f"{info_type}.requiredFields drift: {actual!r}")
         if schemas.get(info_type, {}).get("deliveryFormat") != DELIVERY_FORMATS[info_type]:
             errors.append(f"{info_type}.deliveryFormat drift")
+    signal_contract = catalog.get("signalContract", {})
+    for key, expected in SIGNAL_CONTRACT.items():
+        if signal_contract.get(key) != expected:
+            errors.append(f"signalContract.{key} drift: {signal_contract.get(key)!r}")
     if errors:
         raise RuntimeError("public catalog drift detected: " + "; ".join(errors))
