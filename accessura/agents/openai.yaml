@@ -1,4 +1,4 @@
 interface:
   display_name: "Accessura"
-  short_description: "Trade encrypted World Cup intelligence safely"
-  default_prompt: "Use $accessura to discover and trade encrypted World Cup market intelligence."
+  short_description: "Trade encrypted Politics and Sports intelligence safely"
+  default_prompt: "Use $accessura to discover and trade encrypted Politics and Sports market intelligence."

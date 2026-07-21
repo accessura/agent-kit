@@ -14,8 +14,8 @@ Accessura coordinates and verifies this lifecycle but does not maintain buyer/se
 ### 1. Discover and evaluate
 
 ```http
-GET /api/v1/worldcup/topics?q=norway
-GET /api/v1/worldcup/topics/norway-vs-england/packs
+GET /api/v1/topics?state=active&category=politics
+GET /api/v1/topics/:slug/packs?state=all
 GET /api/v1/packs/:id
 ```
 
@@ -162,11 +162,11 @@ Authorization: ApiKey acc_...
 Content-Type: application/json
 
 {
-  "title": "Time-sensitive match signal",
+  "title": "Time-sensitive market signal",
   "summary": "Why it is useful without revealing the result.",
   "info_type": "text",
-  "topic": "worldcup-2026",
-  "topic_slugs": ["world-cup-winner"],
+  "topic": "current-market",
+  "topic_slugs": ["<current-politics-or-sports-topic-slug>"],
   "source_declaration": "Seller-declared source",
   "preview": ["Observation method", "Freshness window"],
   "fields": {"word_count":500,"source_url":"https://...","language":"en"},
@@ -177,11 +177,12 @@ Content-Type: application/json
     "per_call_price": 0.15,
     "settlement_rule": "top_n_pay_as_bid"
   },
-  "signal_type": "narrative-intel"
+  "signal_type": "narrative-intel",
+  "signal_schema": {"team":"string","status":"string","observed_at":"string"}
 }
 ```
 
-`copies: 3` means three winner slots in each round. Do not interpret it as three lifetime copies. Do not include `signals` in this request; append them separately.
+`signal_type` and the independent, non-empty `signal_schema` are required for every new Pack publish. `fields` remains delivery/container metadata and cannot replace the Signal payload contract. `copies: 3` means three winner slots in each round. Do not interpret it as three lifetime copies. Do not include `signals` in this request; append them separately.
 
 ### 3. Append encrypted content
 
@@ -228,8 +229,9 @@ The envelope must bind the claim/buyer and commit to the original ciphertext has
 
 ```http
 POST /api/v1/packs/:id/delist
-POST /api/v1/packs/:id/relist
 ```
+
+Delisting is permanent. To resume supply, publish a new Pack with a new ID.
 
 If a seller delivery miss pauses one signal, restore payout/delivery readiness
 and explicitly reopen only that signal:

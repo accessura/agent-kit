@@ -321,7 +321,7 @@ class BuyerAgent:
     """Secp256k1-keyed buyer agent. EIP-712 auth, full trading lifecycle."""
 
     def __init__(self, private_key: str,
-                 base_url: str = "https://worldcup-direct-testnet.accessuraportal.com"):
+                 base_url: str = "https://testnet.accessura.io"):
         self.base_url = base_url.rstrip("/")
         self.api = f"{self.base_url}/api/v1"
         self.private_key = private_key
@@ -466,19 +466,19 @@ class BuyerAgent:
 
     # ── discovery ──────────────────────────────────────────────────────
 
-    def list_topics(self, bucket: str = "", query: str = "",
-                    limit: int = 24, page: int = 1) -> dict:
-        params = f"limit={limit}&page={page}"
-        if bucket:
-            params += f"&bucket={urllib.parse.quote(bucket)}"
-        if query:
-            params += f"&q={urllib.parse.quote(query)}"
-        return _request("GET", f"{self.api}/worldcup/topics?{params}", {})
+    def list_topics(self, category: str = "", sector: str = "",
+                    state: str = "active") -> dict:
+        params = [f"state={urllib.parse.quote(state)}"]
+        if category:
+            params.append(f"category={urllib.parse.quote(category)}")
+        if sector:
+            params.append(f"sector={urllib.parse.quote(sector)}")
+        return _request("GET", f"{self.api}/topics?{'&'.join(params)}", {})
 
-    def list_topic_packs(self, slug: str, limit: int = 20) -> dict:
+    def list_topic_packs(self, slug: str, state: str = "all") -> dict:
         return _request(
             "GET",
-            f"{self.api}/worldcup/topics/{urllib.parse.quote(slug)}/packs?limit={limit}",
+            f"{self.api}/topics/{urllib.parse.quote(slug)}/packs?state={urllib.parse.quote(state)}",
             {})
 
     def get_catalog(self) -> dict:
@@ -625,7 +625,7 @@ class SellerAgent:
     """Secp256k1-keyed seller agent. EIP-712 auth, publish + deliver."""
 
     def __init__(self, private_key: str,
-                 base_url: str = "https://worldcup-direct-testnet.accessuraportal.com",
+                 base_url: str = "https://testnet.accessura.io",
                  delivery_secret: Optional[Union[str, bytes]] = None):
         self.base_url = base_url.rstrip("/")
         self.api = f"{self.base_url}/api/v1"
@@ -761,19 +761,19 @@ class SellerAgent:
 
     # ── discovery (shared with buyer — public endpoints) ─────────────
 
-    def list_topics(self, bucket: str = "", query: str = "",
-                    limit: int = 24, page: int = 1) -> dict:
-        params = f"limit={limit}&page={page}"
-        if bucket:
-            params += f"&bucket={urllib.parse.quote(bucket)}"
-        if query:
-            params += f"&q={urllib.parse.quote(query)}"
-        return _request("GET", f"{self.api}/worldcup/topics?{params}", {})
+    def list_topics(self, category: str = "", sector: str = "",
+                    state: str = "active") -> dict:
+        params = [f"state={urllib.parse.quote(state)}"]
+        if category:
+            params.append(f"category={urllib.parse.quote(category)}")
+        if sector:
+            params.append(f"sector={urllib.parse.quote(sector)}")
+        return _request("GET", f"{self.api}/topics?{'&'.join(params)}", {})
 
-    def list_topic_packs(self, slug: str, limit: int = 20) -> dict:
+    def list_topic_packs(self, slug: str, state: str = "all") -> dict:
         return _request(
             "GET",
-            f"{self.api}/worldcup/topics/{urllib.parse.quote(slug)}/packs?limit={limit}",
+            f"{self.api}/topics/{urllib.parse.quote(slug)}/packs?state={urllib.parse.quote(state)}",
             {})
 
     def search(self, query: str, limit: int = 20,
@@ -827,10 +827,6 @@ class SellerAgent:
     def delist_pack(self, pack_id: str) -> dict:
         return _request(
             "POST", f"{self.api}/packs/{pack_id}/delist", self._auth())
-
-    def relist_pack(self, pack_id: str) -> dict:
-        return _request(
-            "POST", f"{self.api}/packs/{pack_id}/relist", self._auth())
 
     def reopen_signal_settlement(self, pack_id: str, signal_id: str) -> dict:
         """Explicitly reopen one signal after restoring seller readiness."""
@@ -951,7 +947,7 @@ class HumanBuyer:
     """Removed compatibility shell; launch Buyers must use signed BuyerAgent."""
 
     def __init__(self, agent_id: str, email: str, password: str,
-                 base_url: str = "https://worldcup-direct-testnet.accessuraportal.com"):
+                 base_url: str = "https://testnet.accessura.io"):
         self.base_url = base_url.rstrip("/")
         self.api = f"{self.base_url}/api/v1"
         self.agent_id = agent_id
@@ -1007,15 +1003,14 @@ class HumanBuyer:
             "POST", f"{self.api}/packs/{pack_id}/settle",
             self._auth(), {"signal_id": signal_id})
 
-    def list_topics(self, bucket: str = "", query: str = "",
-                    limit: int = 24) -> dict:
-        params = f"limit={limit}"
-        if bucket:
-            params += f"&bucket={urllib.parse.quote(bucket)}"
-        if query:
-            params += f"&q={urllib.parse.quote(query)}"
-        return _request(
-            "GET", f"{self.api}/worldcup/topics?{params}", {})
+    def list_topics(self, category: str = "", sector: str = "",
+                    state: str = "active") -> dict:
+        params = [f"state={urllib.parse.quote(state)}"]
+        if category:
+            params.append(f"category={urllib.parse.quote(category)}")
+        if sector:
+            params.append(f"sector={urllib.parse.quote(sector)}")
+        return _request("GET", f"{self.api}/topics?{'&'.join(params)}", {})
 
     def get_catalog(self) -> dict:
         return _request("GET", f"{self.api}/catalog", {})

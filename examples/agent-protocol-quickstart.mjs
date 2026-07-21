@@ -10,8 +10,8 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import { canonicalize } from "../../src/lib/crypto/canonical.ts";
 import { buyerDecrypt } from "../../src/lib/crypto/ecies.ts";
 
-const BASE = process.env.ACCESSURA_API_BASE ?? "https://worldcup-direct-testnet.accessuraportal.com/api/v1";
-const SEED_PACK_ID = process.env.ACCESSURA_PACK_ID ?? "wc-2026-player-status";
+const BASE = process.env.ACCESSURA_API_BASE ?? "https://testnet.accessura.io/api/v1";
+const PACK_ID_OVERRIDE = process.env.ACCESSURA_PACK_ID;
 const SIGNAL_ID_OVERRIDE = process.env.ACCESSURA_SIGNAL_ID;
 const PRICE = Number(process.env.ACCESSURA_BID_PRICE ?? 2.1);
 const RUN_ID = Math.random().toString(36).slice(2, 10);
@@ -144,11 +144,13 @@ const encryptionPubkey = uncompressedSecp256k1Pubkey(encryptionPrivateKey);
 const agentId = buyer.address;
 
 // 2. Topic-first public discovery and Pack/Signal inspection.
-const topics = await api("/worldcup/topics?limit=1");
+const topics = await api("/topics?state=active");
 const topicSlug = process.env.ACCESSURA_TOPIC_SLUG ?? topics.json.topics?.[0]?.slug;
 if (!topicSlug) throw new Error("no concrete topic slug returned");
 const packs = await api("/packs?topic_slug=" + encodeURIComponent(topicSlug));
-const selectedPack = packs.json.packs?.find((pack) => pack.id === SEED_PACK_ID) ?? packs.json.packs?.[0];
+const selectedPack = PACK_ID_OVERRIDE
+  ? packs.json.packs?.find((pack) => pack.id === PACK_ID_OVERRIDE)
+  : packs.json.packs?.[0];
 if (!selectedPack) throw new Error("no Pack returned for the selected topic");
 const packId = selectedPack.id;
 const packDetailResponse = (await api("/packs/" + encodeURIComponent(packId))).json;

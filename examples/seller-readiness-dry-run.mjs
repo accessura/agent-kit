@@ -43,7 +43,7 @@ const opened = buyerDecrypt(envelope.platform_broker, framed, buyerPrivateKey);
 check(opened.equals(plaintext), "intended Buyer opens the exact Seller-local plaintext");
 check(!JSON.stringify(envelope.platform_broker).includes("seller-local-only"), "broker contains no plaintext or DEK");
 
-const apiBase = (process.env.ACCESSURA_API_BASE ?? "https://worldcup-direct-testnet.accessuraportal.com/api/v1").replace(/\/$/, "");
+const apiBase = (process.env.ACCESSURA_API_BASE ?? "https://testnet.accessura.io/api/v1").replace(/\/$/, "");
 const credential = process.env.ACCESSURA_SELLER_API_KEY
   ? `ApiKey ${process.env.ACCESSURA_SELLER_API_KEY}`
   : process.env.ACCESSURA_SELLER_TOKEN ? `Bearer ${process.env.ACCESSURA_SELLER_TOKEN}` : null;
