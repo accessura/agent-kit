@@ -613,6 +613,18 @@ def test_skill_validator_scans_references_readme_and_examples(tmp_path):
         validate_skill_bundle.validate_forbidden_text((forbidden,))
 
 
+def test_skill_validator_skips_binary_example_artifacts(tmp_path):
+    validate_skill_bundle = load_repo_script("validate_skill_bundle")
+
+    text_example = tmp_path / "example.py"
+    text_example.write_text("print('ok')", encoding="utf-8")
+    binary_cache = tmp_path / "example.pyc"
+    binary_cache.write_bytes(b"\xfe\x00binary-cache")
+
+    assert validate_skill_bundle.is_text_scan_file(text_example)
+    assert not validate_skill_bundle.is_text_scan_file(binary_cache)
+
+
 def test_kit_keeps_all_five_stable_version_pins():
     from pathlib import Path
 

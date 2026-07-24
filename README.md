@@ -74,9 +74,9 @@ upgrade, replace `v0.6.0` with a newer published tag and add `--upgrade` to the
 same `pip install` command. To uninstall, run
 `python -m pip uninstall accessura-agent-kit`.
 
-JC has authorized one isolated funded Base Sepolia lifecycle as the remaining
-stable-release gate, but it has not yet run. The funded Buyer key and Seller
-payout identity must be provided before execution, and no `v0.6.0` tag may be
+One isolated funded Base Sepolia lifecycle remains a stable-release gate, but
+it is not authorized and has not run. JC must provide the environment-only
+Buyer/Seller inputs and explicitly authorize execution; no `v0.6.0` tag may be
 created until all nine checks in
 [the funded validation runbook](docs/funded-base-sepolia-validation.md) pass.
 
@@ -114,6 +114,8 @@ Credentials are environment-only:
   a restart to refresh it without creating another API key.
 - `ACCESSURA_PRIVATE_KEY` signs identity, bid, payout-wallet, and x402 messages and performs buyer-side ECIES decryption.
 - `ACCESSURA_DELIVERY_SECRET` is a separate 32-byte hex secret used only by sellers for managed per-signal DEK derivation. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`; never reuse the wallet key.
+- `ACCESSURA_MAX_PAY_USDC` caps one x402 signature in whole USDC and defaults to `100`.
+- `ACCESSURA_ALLOW_MAINNET=1` is required before the SDK will sign or report readiness for `eip155:8453`; leave it unset for Base Sepolia.
 - No MCP tool accepts a private key or DEK as an argument.
 - `claims_pay` is the only public MCP tool that moves funds and requires `confirm_real_payment=true`.
 
@@ -137,7 +139,12 @@ buyer.settle(pack_id, signal_id)
 # Paying is a separate, explicit real-money action.
 payment = buyer.get_payment(claim_id)
 if payment["_http_status"] == 402:
-    delivery = buyer.pay_claim(claim_id)  # direct Base USDC -> seller
+    offer = payment["accepts"][0]
+    delivery = buyer.pay_claim(
+        claim_id,
+        expected_amount=str(offer["amount"]),
+        expected_pay_to=offer["payTo"],
+    )  # direct Base USDC -> seller
 plaintext = buyer.decrypt_paid_claim(claim_id)
 receipt = buyer.get_transaction_receipt(claim_id)
 ```

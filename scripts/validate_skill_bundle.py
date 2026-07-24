@@ -28,6 +28,16 @@ PACKAGE_VERSION_FILES = (
     ROOT / "pyproject.toml",
     ROOT / "accessura_sdk" / "pyproject.toml",
 )
+TEXT_EXTENSIONS = {
+    ".json",
+    ".js",
+    ".md",
+    ".mjs",
+    ".py",
+    ".toml",
+    ".yaml",
+    ".yml",
+}
 
 
 def fail(message: str) -> None:
@@ -78,12 +88,20 @@ def validate_links(text: str) -> None:
         fail(f"SKILL.md does not link required references: {sorted(missing)}")
 
 
+def is_text_scan_file(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in TEXT_EXTENSIONS
+
+
 def forbidden_scan_files() -> tuple[Path, ...]:
     files = [
         SKILL_FILE,
         *(SKILL_DIR / "references").glob("*.md"),
         ROOT / "README.md",
-        *(path for path in (ROOT / "examples").rglob("*") if path.is_file()),
+        *(
+            path
+            for path in (ROOT / "examples").rglob("*")
+            if is_text_scan_file(path)
+        ),
     ]
     return tuple(sorted(set(files)))
 

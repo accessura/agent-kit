@@ -135,10 +135,19 @@ The configured facilitator verifies and settles Base USDC directly from buyer to
 ```text
 claims_pay(claim_id=..., confirm_real_payment=false)
 # verify the returned live network, asset, payTo, amount, and timeout
-claims_pay(claim_id=..., confirm_real_payment=true)
+claims_pay(
+    claim_id=...,
+    confirm_real_payment=true,
+    expected_amount=<preview accepts[0].amount>,
+    expected_pay_to=<preview accepts[0].payTo>,
+)
 ```
 
-No bid, settlement, claim-list, or decrypt operation implicitly pays.
+The confirmed call is refused if the live amount or recipient differs from
+the preview, if the amount exceeds `ACCESSURA_MAX_PAY_USDC` (default `100`),
+or if mainnet is requested without `ACCESSURA_ALLOW_MAINNET=1`. Leave the
+mainnet override unset for Base Sepolia. No bid, settlement, claim-list, or
+decrypt operation implicitly pays.
 
 ### 7. Fetch and decrypt
 

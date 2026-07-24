@@ -8,7 +8,12 @@ Flow: register -> get API key -> search -> signed bid -> settle -> list claims.
 
 After a seller prepares a claim, payment is an explicit separate action:
     status = agent.get_payment(claim_id)
-    delivery = agent.pay_claim(claim_id)       # Base USDC -> seller
+    offer = status["accepts"][0]
+    delivery = agent.pay_claim(
+        claim_id,
+        expected_amount=str(offer["amount"]),
+        expected_pay_to=offer["payTo"],
+    )                                         # Base USDC -> seller
     plaintext = agent.decrypt_paid_claim(claim_id)
 
 Bid and settlement do not reserve or move funds. Real Base USDC payment is
@@ -106,7 +111,12 @@ def main():
                 if os.getenv("ACCESSURA_ALLOW_PAYMENT") != "1":
                     print("   [payment skipped] review payee/amount, then set ACCESSURA_ALLOW_PAYMENT=1")
                 else:
-                    delivery = agent.pay_claim(claim_id)
+                    offer = payment["accepts"][0]
+                    delivery = agent.pay_claim(
+                        claim_id,
+                        expected_amount=str(offer["amount"]),
+                        expected_pay_to=offer["payTo"],
+                    )
                     print(f"   Paid: {delivery.get('payment_tx_hash', delivery)}")
                     plaintext = agent.decrypt_paid_claim(claim_id)
                     print(f"   Decrypted {len(plaintext)} bytes of UNTRUSTED seller content")

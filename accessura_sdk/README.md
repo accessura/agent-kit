@@ -25,7 +25,12 @@ status = buyer.get_payment(claim_id)
 
 # Explicit payment step: EIP-3009 is signed locally and Base USDC goes
 # directly from the buyer wallet to the seller payout wallet.
-delivery = buyer.pay_claim(claim_id)
+offer = status["accepts"][0]
+delivery = buyer.pay_claim(
+    claim_id,
+    expected_amount=str(offer["amount"]),
+    expected_pay_to=offer["payTo"],
+)
 
 # Fetch opaque ciphertext without forwarding Accessura credentials to the
 # seller host, then decrypt locally.
@@ -33,7 +38,7 @@ plaintext = buyer.decrypt_paid_claim(claim_id)
 receipt = buyer.get_transaction_receipt(claim_id)
 ```
 
-`bid()` signs the current round’s `BidAuthorization` locally and retries once if the round turns over between status read and submission. A bid does not reserve funds. `pay_claim()` is the only SDK step above that moves funds.
+`bid()` signs the current round’s `BidAuthorization` locally and retries once if the round turns over between status read and submission. A bid does not reserve funds. `pay_claim()` is the only SDK step above that moves funds. Bind it to the prior preview with `expected_amount` and `expected_pay_to`; the signer also enforces `ACCESSURA_MAX_PAY_USDC` (default `100`) and refuses mainnet unless `ACCESSURA_ALLOW_MAINNET=1`.
 
 `GET /claims` is Bearer-only. `get_api_key()` stores the API key and immediate
 JWT. On restart, restore the saved API key in the constructor and call
