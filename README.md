@@ -79,6 +79,11 @@ it is not authorized and has not run. JC must provide the environment-only
 Buyer/Seller inputs and explicitly authorize execution; no `v0.6.0` tag may be
 created until all nine checks in
 [the funded validation runbook](docs/funded-base-sepolia-validation.md) pass.
+For local preparation, `python scripts/prepare_funded_testnet_env.py --check`
+validates JC's existing wallets without creating one: the execute runner
+automatically registers both identities and binds the Seller payout (no
+pre-registration or pre-bind is required), and it accepts only Circle's Base
+Sepolia USDC contract `0x036CbD53842c5426634e7929541eC2318f3dCF7e`.
 
 Supported Python versions are 3.10 and newer. Verify an installation without
 making an API call or payment:

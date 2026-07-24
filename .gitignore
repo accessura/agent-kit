@@ -6,3 +6,4 @@ build/
 dist/
 .env
 .mcp.json
+.funded-env
