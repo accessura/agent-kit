@@ -19,6 +19,10 @@ REQUIRED_REFERENCES = {
 FORBIDDEN_TEXT = (
     "scripts/agent-ecosystem",
     "web-demo-design",
+    "orders_list",
+    "sales_list",
+    "packs_relist",
+    "sectorSlugs",
 )
 
 
@@ -85,8 +89,17 @@ def main() -> None:
     missing = [str(path.relative_to(ROOT)) for path in expected if not path.is_file()]
     if missing:
         fail(f"required bundle files are missing: {missing}")
-    if not re.fullmatch(r"\d+\.\d+\.\d+\n?", version_file.read_text(encoding="utf-8")):
+    skill_version = version_file.read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", skill_version):
         fail("VERSION must contain a semantic version")
+    project_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    project_version_match = re.search(
+        r'^version\s*=\s*"([^"]+)"\s*$',
+        project_text,
+        flags=re.MULTILINE,
+    )
+    if not project_version_match or project_version_match.group(1) != skill_version:
+        fail("Skill VERSION must match the package version in pyproject.toml")
     print("Accessura Skill bundle is valid")
 
 

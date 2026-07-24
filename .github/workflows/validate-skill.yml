@@ -11,7 +11,7 @@ on:
     branches:
       - main
     tags:
-      - "skill-v*"
+      - "v*"
     paths:
       - "accessura/**"
       - "scripts/validate_skill_bundle.py"

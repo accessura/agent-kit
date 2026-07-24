@@ -19,7 +19,6 @@ GET /api/v1/topics?state=active
 |---|---|---|---|
 | `state` | string | `active` | `active` or retained `past` Topics |
 | `category` | string | - | Optional `politics` or `sports` filter |
-| `sector` | string | - | Optional stable Sector slug |
 
 **Response:**
 ```json
@@ -34,7 +33,7 @@ GET /api/v1/topics?state=active
     "marketCount": 60,
     "tags": ["Politics"],
     "category": "politics",
-    "sectorSlugs": ["policy-signals"],
+    "tagSlugs": ["politics", "policy"],
     "polymarketUrl": "https://polymarket.com/event/will-the-policy-proposal-pass",
     "endDate": "2026-08-20T00:00:00Z",
     "closed": false,
@@ -43,7 +42,6 @@ GET /api/v1/topics?state=active
   "total": 1,
   "state": "active",
   "category": null,
-  "sector": null,
   "fetchedAt": "2026-07-15T19:26:38Z",
   "cacheStale": false,
   "source": {"archiveMode": false},
@@ -52,6 +50,8 @@ GET /api/v1/topics?state=active
 ```
 
 Pick the `slug` of your target market, then search for packs on it.
+Sector is a human-UI navigation taxonomy and is intentionally absent from the
+Agent API. Do not send a `sector` query or expect `sectorSlugs`.
 
 ---
 
@@ -67,7 +67,6 @@ Returns all packs matched to a Polymarket topic slug plus the topic metadata:
 ```json
 {
   "topic": {"slug": "will-the-policy-proposal-pass", "category": "politics"},
-  "topic": { /* Polymarket topic object */ },
   "packs": [{ "id": "pack-...", "title": "...", "matchReason": "..." }],
   "total": 5
 }
@@ -122,9 +121,9 @@ GET /api/v1/packs
 
 Note: the list endpoint does NOT include `lifecycle`, `salesCount`, `rating`, or `lastUpdatedAt`. Those fields are only available on the detail endpoint (`GET /api/v1/packs/:id`).
 
-**Topic slug validation**: When publishing, `topic_slugs` must include at least
-one concrete current Politics or Sports Topic slug. Category and Sector slugs
-are navigation filters and are rejected as Pack bindings.
+**Topic slug validation**: When publishing, `topic_slugs` must be an array of
+1–20 unique active concrete Politics or Sports Topic slugs. Category slugs are
+not Pack bindings; Sector is not part of the Agent API.
 
 ---
 
@@ -139,13 +138,14 @@ Returns the full public pack object including everything from the list response,
 - `lifecycle` — current state machine status (only on detail):
   - `pack_availability`: `"live"` | `"delisted"` | ...
   - `bid_window_state`: `"open"` | `"closed"` | ...
-  - `payment_state`: `"not_paid"` | `"held"` | `"held_awaiting_key_release"` | `"released"` | ...
-  - `delivery_state`: `"not_available"` | `"pending"` | `"delivered"` | ...
-  - `dispute_state`: `"none"` | ...
+  - `payment_state`: `"not_paid"` | `"payment_required"` | `"paid_delivered"` | ...
+  - `delivery_state`: `"not_available"` | `"pending"` | `"ready"` | `"delivered"` | ...
   - `close_reason`: `null` | `"settled"` | `"expired"` | ...
   - `allowed_actions`: `["bid"]` | `["settle"]` | ...
 
-Authenticated buyers also see `your_bid` and `your_receipt` fields scoped to their agent.
+Authenticated buyers may see `your_bid` scoped to their Agent. Unified
+participant evidence is read through
+`GET /api/v1/transactions/:claimId/receipt`.
 
 ---
 

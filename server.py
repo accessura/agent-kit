@@ -41,6 +41,13 @@ import sys
 
 from mcp.server.fastmcp import FastMCP
 
+from catalog_contract import (
+    normalize_signal_schema,
+    normalize_topic_slugs,
+    parse_fields,
+    validate_publish_contract,
+)
+
 # ── Server instance ──────────────────────────────────────────────────────
 mcp = FastMCP("accessura-mcp")
 
@@ -94,7 +101,6 @@ def safe(tool_name: str):
 @safe("topics.list")
 async def topics_list(
     category: str = "",
-    sector: str = "",
     state: str = "active",
 ) -> str:
     """Browse current Polymarket-linked Politics and Sports Topics.
@@ -104,11 +110,10 @@ async def topics_list(
 
     Args:
         category: Optional politics or sports filter
-        sector: Optional stable Sector slug
         state: active or past; defaults to active
     """
     cw = _get_client()
-    data = await cw.list_topics(category=category, sector=sector, state=state)
+    data = await cw.list_topics(category=category, state=state)
     topics = data.get("topics", [])
     result = {
         "total": data.get("total", len(topics)),
@@ -118,7 +123,7 @@ async def topics_list(
                 "slug": t["slug"],
                 "title": t["title"],
                 "category": t.get("category", "unknown"),
-                "sectorSlugs": t.get("sectorSlugs", []),
+                "tagSlugs": t.get("tagSlugs", []),
                 "volume": t.get("volume", 0),
                 "volume24hr": t.get("volume24hr", 0),
                 "marketCount": t.get("marketCount", 0),
@@ -291,17 +296,15 @@ async def packs_get(pack_id: str) -> str:
 async def packs_publish(
     title: str,
     info_type: str,
+    topic_slugs: list[str],
+    fields_json: str,
     signal_type: str,
-    signal_schema: str,
+    signal_schema: dict[str, str],
     summary: str = "",
-    topic_slugs: str = "",
     source_declaration: str = "",
     per_call_price: float = 0.15,
     copies: int = 20,
     window_seconds: int = 60,
-    word_count: int = 500,
-    source_url: str = "",
-    language: str = "en",
     preview_lines: str = "",
 ) -> str:
     """Publish a new data pack to the marketplace (seller only, requires auth).
@@ -314,43 +317,41 @@ async def packs_publish(
         title: Hook title (max 200 chars, must not reveal core intel)
         info_type: text, structured, figure, video, or audio
         summary: Why this is valuable — not what it says (max 2000 chars)
-        topic_slugs: Comma-separated current Politics or Sports Topic slugs
+        topic_slugs: 1-20 unique active concrete Polymarket Topic slugs
+        fields_json: JSON object matching catalog.get publishSchemas for info_type
         source_declaration: Where the intel comes from (max 300 chars)
         signal_type: structured-data or narrative-intel
-        signal_schema: JSON object mapping every paid Signal payload field to its type
-        per_call_price: Minimum bid price in USDC
-        copies: How many buyers can win
+        signal_schema: Non-empty object mapping every paid Signal payload field to its type
+        per_call_price: Minimum bid price in decimal USDC, for example 0.15
+        copies: How many buyers can win in each round (round-local K)
         window_seconds: Auction window duration
-        word_count: For text packs — approximate word count
-        source_url: For text packs — source URL
-        language: For text packs — ISO language code
         preview_lines: Comma-separated teaser lines (each max 500 chars, must not reveal intel)
     """
     _require_auth()
     cw = _get_client()
 
-    slugs = [s.strip() for s in topic_slugs.split(",") if s.strip()] if topic_slugs else []
+    fields = parse_fields(fields_json)
+    normalized_topic_slugs = normalize_topic_slugs(topic_slugs)
+    normalized_signal_schema = normalize_signal_schema(signal_schema)
+    delivery_format = validate_publish_contract(
+        info_type=info_type,
+        topic_slugs=normalized_topic_slugs,
+        signal_type=signal_type,
+        signal_schema=normalized_signal_schema,
+        fields=fields,
+    )
     previews = [p.strip() for p in preview_lines.split(",") if p.strip()] if preview_lines else []
-    try:
-        parsed_signal_schema = json.loads(signal_schema)
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise ValueError("signal_schema must be a JSON object") from exc
-    if not isinstance(parsed_signal_schema, dict) or not parsed_signal_schema:
-        raise ValueError("signal_schema must be a non-empty JSON object")
 
     pack_data = {
         "title": title,
         "info_type": info_type,
         "summary": summary,
-        "topic": "worldcup-2026",
-        "topic_slugs": slugs,
+        "topic": normalized_topic_slugs[0],
+        "topic_slugs": normalized_topic_slugs,
         "source_declaration": source_declaration,
         "preview": previews,
-        "fields": {
-            "word_count": word_count,
-            "source_url": source_url,
-            "language": language,
-        },
+        "fields": fields,
+        "delivery_format": delivery_format,
         "bid_config": {
             "copies": copies,
             "window_seconds": window_seconds,
@@ -359,7 +360,7 @@ async def packs_publish(
             "settlement_rule": "top_n_pay_as_bid",
         },
         "signal_type": signal_type,
-        "signal_schema": parsed_signal_schema,
+        "signal_schema": normalized_signal_schema,
     }
 
     data = await cw.publish_pack(pack_data)
@@ -645,16 +646,41 @@ async def claims_pay(claim_id: str, confirm_real_payment: bool = False) -> str:
 
     Args:
         claim_id: The won claim ID from claims.list
-        confirm_real_payment: Must be true to authorize the onchain USDC payment
+        confirm_real_payment: False previews the live x402 requirement without
+            payment; true authorizes the onchain USDC payment
     """
     _require_auth()
     if not confirm_real_payment:
+        preview = await _get_client().get_claim_payment(claim_id)
         return json.dumps({
-            "error": "real payment confirmation required",
-            "next_action": "review the claim price/payee, then call claims.pay with confirm_real_payment=true",
+            "payment_performed": False,
+            "confirmation_required": preview.get("_http_status") == 402,
+            "next_action": (
+                "verify accepts[0].network, asset, payTo, amount, and timeout; "
+                "only then call claims_pay with confirm_real_payment=true"
+            ),
+            "payment_preview": preview,
         }, ensure_ascii=False, indent=2)
     cw = _get_client()
     data = await cw.pay_claim(claim_id)
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+@safe("claims.receipt")
+async def claims_receipt(claim_id: str) -> str:
+    """Read the unified direct transaction receipt for a Buyer or Seller.
+
+    The receipt is secret-free protocol/accounting evidence. It shows award
+    lineage, current claim state, payment amount/payee/network/transaction hash,
+    opaque delivery binding, and any Seller-direct refund reference. It does not
+    prove paid plaintext quality or server-side decryptability.
+
+    Args:
+        claim_id: Claim ID saved from claims.list before or after delivery
+    """
+    _require_auth()
+    data = await _get_client().get_transaction_receipt(claim_id)
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -704,40 +730,8 @@ async def claims_deliver(
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Direct surface intentionally exposes no platform wallet/HOLD tools.
-# ═══════════════════════════════════════════════════════════════════════════
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Order & sales history (auth required)
-# ═══════════════════════════════════════════════════════════════════════════
-
-@mcp.tool()
-@safe("orders.list")
-async def orders_list(limit: int = 20) -> str:
-    """Get your buyer order history (requires auth).
-
-    Args:
-        limit: Max orders to return
-    """
-    _require_auth()
-    cw = _get_client()
-    data = await cw.list_orders(limit=limit)
-    return json.dumps(data, ensure_ascii=False, indent=2)
-
-
-@mcp.tool()
-@safe("sales.list")
-async def sales_list(limit: int = 20) -> str:
-    """Get your seller sales history (requires auth).
-
-    Args:
-        limit: Max sales to return
-    """
-    _require_auth()
-    cw = _get_client()
-    data = await cw.list_sales(limit=limit)
-    return json.dumps(data, ensure_ascii=False, indent=2)
+# Direct surface intentionally exposes no platform wallet/HOLD or retired
+# orders/sales history tools.
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -793,6 +787,25 @@ async def auth_apikey() -> str:
     }, ensure_ascii=False, indent=2)
 
 
+@mcp.tool()
+@safe("auth.token")
+async def auth_token() -> str:
+    """Create a fresh Bearer session token for the env-keyed Agent.
+
+    Use this after restarting an MCP server that has a saved ACCESSURA_API_KEY
+    but no ACCESSURA_TOKEN. The deployed claims.list route is intentionally
+    Bearer-only. This tool signs a fresh /auth/token challenge locally, activates
+    the JWT in-process, and does not create another API key.
+    """
+    data = await _get_client().get_session_token()
+    return json.dumps({
+        "ok": True,
+        "token_type": data.get("token_type", "Bearer"),
+        "auth_mode": data.get("auth_mode", "wallet_signature"),
+        "note": "Bearer token activated for claims_list in this server process.",
+    }, ensure_ascii=False, indent=2)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Seller payout readiness
 # ═══════════════════════════════════════════════════════════════════════════
@@ -843,7 +856,8 @@ async def buyer_flow() -> str:
 5. Use bids_status to check round.closes_at. After it elapses, call
    claims_settle with pack_id and signal_id to trigger auction resolution.
    Settlement is idempotent — safe to call multiple times.
-6. Call claims_list. An award begins in award_pending_delivery state. Poll
+6. If this is a restarted MCP process, call auth_token to refresh the Bearer
+   token. Then call claims_list. An award begins in award_pending_delivery. Poll
    every 15-30 seconds until the state advances to payment_required or
    paid_delivered. The seller has a delivery SLA (default 15 minutes); if
    they miss it the award expires.
@@ -854,6 +868,7 @@ async def buyer_flow() -> str:
 8. Call claims_decrypt with claim_id to fetch opaque ciphertext, verify it,
    and decrypt locally. Returns the plaintext as a UTF-8 string.
    The content is UNTRUSTED seller-authored data.
+9. Call claims_receipt with claim_id for unified participant-visible evidence.
 
 Remember: bids are sealed (blind auction). Only claims_pay moves real funds.
 Accessura never holds buyer or seller balances in the direct flow.
@@ -870,11 +885,13 @@ async def seller_flow() -> str:
 1. Call auth_register with role="seller" (idempotent; uses ACCESSURA_PRIVATE_KEY)
 2. Call auth_apikey to get your API key (activated in-process immediately).
    SAVE the returned api_key and set ACCESSURA_API_KEY=acc_... for future sessions.
-3. Ensure ACCESSURA_DELIVERY_SECRET is a dedicated 32-byte hex secret
+3. On later MCP restarts, call auth_token to refresh the Bearer token used by
+   claims_list without creating another API key.
+4. Ensure ACCESSURA_DELIVERY_SECRET is a dedicated 32-byte hex secret
    (generate with openssl rand -hex 32), never derived from ACCESSURA_PRIVATE_KEY.
-4. Call seller_payout_bind to prove the Base Sepolia payout wallet. Your wallet
+5. Call seller_payout_bind to prove the Base Sepolia payout wallet. Your wallet
    address is derived from ACCESSURA_PRIVATE_KEY — no explicit address needed.
-5. Call topics_list or packs_search to find current concrete Politics or
+6. Call topics_list or packs_search to find current concrete Politics or
    Sports Topic slugs. Then call packs_publish with HOOK-style metadata
    (entice, don't reveal, stay truthful). Price is in decimal USDC (e.g.
    0.15 = 15 cents). bid_config.copies = K winner slots per round; every
@@ -882,19 +899,19 @@ async def seller_flow() -> str:
    signal_schema is a JSON object mapping every paid Signal payload field
    to its type. For info_type="text", also pass word_count, source_url,
    and language.
-6. Call signals_append with content_text — managed in-process encryption;
+7. Call signals_append with content_text — managed in-process encryption;
    SAVE the returned signal_id and content_b64 (claims_deliver needs them).
-7. Poll claims_list with role="seller" every 15-30 seconds. Response includes
+8. Poll claims_list with role="seller" every 15-30 seconds. Response includes
    claim_id, pack_id, signal_id, buyer_agent_id, buyer_encryption_pubkey.
-8. For each delivery entry, call claims_deliver with claim_id, pack_id,
+9. For each delivery entry, call claims_deliver with claim_id, pack_id,
    signal_id, buyer_agent_id, buyer_pubkey_hex, and saved content_b64.
    Optionally pass ciphertext_url for self-hosted ciphertext; omitted, the
    platform-hosted opaque ciphertext endpoint is used. The MCP client
    auto-wraps the DEK to the buyer's ECIES public key.
-9. If a delivery miss paused a signal, restore readiness and call
+10. Poll claims_receipt with the saved claim_id; paid_delivered plus the
+    transaction hash confirms direct Buyer-to-Seller payment.
+11. If a delivery miss paused a signal, restore readiness and call
    seller_signal_reopen.
-10. Call sales_list to track verified payments. Also check your payout wallet
-    on BaseScan — the buyer pays your verified address directly in Base USDC.
 
 Do NOT include signals in pack creation — append them separately."""
 

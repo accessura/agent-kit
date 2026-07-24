@@ -9,6 +9,7 @@ from eth_account.messages import encode_typed_data
 from accessura_sdk.client import (
     BASE_SEPOLIA_USDC,
     BID_AUTHORIZATION_TYPES,
+    DEFAULT_X402_NETWORK,
     PROTOCOL_DOMAIN,
     BuyerAgent,
     HumanBuyer,
@@ -299,6 +300,16 @@ def test_payment_readiness_defaults_to_base_sepolia_without_platform_balance():
     assert readiness["platform_balance"] is None
 
 
+def test_signing_domain_and_payment_network_are_independent_constants():
+    assert PROTOCOL_DOMAIN == {
+        "name": "WorldcupProtocol",
+        "version": "1",
+        "chainId": 8453,
+        "verifyingContract": "0x0000000000000000000000000000000000000000",
+    }
+    assert DEFAULT_X402_NETWORK == "eip155:84532"
+
+
 def test_seller_managed_encryption_requires_a_separate_delivery_secret():
     missing = SellerAgent(PRIVATE_KEY)
     with pytest.raises(RuntimeError, match="dedicated 32-byte"):
@@ -316,6 +327,8 @@ def test_mcp_public_surface_has_one_explicit_payment_action():
     wrapper = (root / "client_wrapper.py").read_text()
     sdk = (root / "accessura_sdk" / "client.py").read_text()
     assert '@safe("claims.pay")' in source
+    assert '@safe("claims.receipt")' in source
+    assert '@safe("auth.token")' in source
     assert '@safe("payments.readiness")' in source
     assert '@safe("seller.signal_reopen")' in source
     assert "confirm_real_payment" in source
@@ -323,9 +336,46 @@ def test_mcp_public_surface_has_one_explicit_payment_action():
     assert '@safe("wallet.deposit")' not in source
     assert '@safe("wallet.withdraw")' not in source
     assert '@safe("claims.receipt_ack")' not in source
+    assert '@safe("packs.relist")' not in source
+    assert '@safe("orders.list")' not in source
+    assert '@safe("sales.list")' not in source
     assert "async def wallet_deposit" not in wrapper
     assert "async def wallet_withdraw" not in wrapper
     assert "async def get_balance" not in wrapper
+    assert "async def relist_pack" not in wrapper
+    assert "async def list_orders" not in wrapper
+    assert "async def list_sales" not in wrapper
+    assert "async def get_transaction_receipt" in wrapper
+    assert "async def get_session_token" in wrapper
     assert "def wallet_deposit" not in sdk
     assert "def wallet_withdraw" not in sdk
     assert "def get_balance" not in sdk
+    assert "def relist_pack" not in sdk
+    assert "def list_orders" not in sdk
+    assert "def list_sales" not in sdk
+    assert '"/orders' not in wrapper
+    assert '"/sales' not in wrapper
+    assert '"/orders' not in sdk
+    assert '"/sales' not in sdk
+    assert hasattr(BuyerAgent, "get_transaction_receipt")
+    assert hasattr(SellerAgent, "get_transaction_receipt")
+    assert hasattr(SellerAgent, "login")
+
+
+def test_sdk_constructors_accept_saved_credentials():
+    buyer = BuyerAgent(
+        "0x" + "11" * 32,
+        api_key="acc_saved",
+        token="jwt_saved",
+    )
+    seller = SellerAgent(
+        "0x" + "22" * 32,
+        delivery_secret="ab" * 32,
+        api_key="acc_saved",
+        token="jwt_saved",
+    )
+
+    assert buyer._auth() == {"Authorization": "ApiKey acc_saved"}
+    assert buyer._bearer_auth() == {"Authorization": "Bearer jwt_saved"}
+    assert seller._auth() == {"Authorization": "ApiKey acc_saved"}
+    assert seller._bearer_auth() == {"Authorization": "Bearer jwt_saved"}

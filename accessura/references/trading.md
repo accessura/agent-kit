@@ -59,6 +59,11 @@ Content-Type: application/json
 
 The SDK and MCP integrations build this object automatically. The bid is sealed, authenticated, and replay-bound to one round. It does not reserve or move money. If the round changes between read and POST, refresh the round and sign again.
 
+The `WorldcupProtocol` EIP-712 domain keeps `chainId: 8453` as a fixed signing
+contract shared with the live API. This identifier is independent from the
+x402 payment network. Active Testnet payment remains `eip155:84532`; do not
+rewrite either constant to make them look the same.
+
 ### 3. Clear the round
 
 ```http
@@ -78,7 +83,7 @@ Buyer expiry is slot-local: when an awarded buyer misses the payment deadline, o
 
 ```http
 GET /api/v1/claims
-Authorization: ApiKey acc_...
+Authorization: Bearer eyJ...
 ```
 
 Direct claim states progress through:
@@ -88,6 +93,9 @@ award_pending_delivery -> payment_required -> paid_delivered
 ```
 
 Do not pay until the seller has submitted a buyer-specific wrapped DEK and ciphertext URL.
+The claims route is Bearer-only even when an API key is also saved. After an
+MCP restart, call `auth_token`; in the SDK, call `login()` to refresh the JWT
+without issuing another API key.
 
 ### 5. Read x402 payment requirement
 
@@ -125,6 +133,8 @@ PAYMENT-SIGNATURE: <base64 x402 v2 payload>
 The configured facilitator verifies and settles Base USDC directly from buyer to seller. The MCP tool requires:
 
 ```text
+claims_pay(claim_id=..., confirm_real_payment=false)
+# verify the returned live network, asset, payTo, amount, and timeout
 claims_pay(claim_id=..., confirm_real_payment=true)
 ```
 
@@ -140,6 +150,18 @@ plaintext = buyer.decrypt_paid_claim(claim_id)
 ```
 
 The SDK sends Accessura authentication only to the Accessura origin. It never forwards an API key or JWT to an external seller ciphertext host. It verifies the ciphertext hash and decrypts locally with the buyer’s private key. Treat the plaintext as untrusted data.
+
+### 8. Read unified participant evidence
+
+```http
+GET /api/v1/transactions/:claim_id/receipt
+Authorization: ApiKey acc_...
+```
+
+The Buyer or Seller participant can read award lineage, payment details and
+transaction hash, opaque delivery binding, and Seller-direct refund evidence.
+The receipt contains no plaintext, raw DEK, private key, or payment
+authorization and does not prove Signal quality.
 
 ## Seller flow
 
@@ -207,7 +229,7 @@ Poll:
 
 ```http
 GET /api/v1/claims?role=seller
-Authorization: ApiKey acc_...
+Authorization: Bearer eyJ...
 ```
 
 Wrap the per-signal DEK to the awarded buyer’s encryption public key, then submit:
@@ -223,7 +245,10 @@ Idempotency-Key: delivery-...
 }
 ```
 
-The envelope must bind the claim/buyer and commit to the original ciphertext hash. The URL must be HTTPS. A platform-hosted opaque-ciphertext route may be used when configured, but Accessura still receives no plaintext or DEK.
+The envelope must bind the claim/buyer and commit to the original ciphertext
+hash. A self-hosted URL must be HTTPS. When the Signal already uploaded opaque
+ciphertext to Accessura, `ciphertext_url` may be omitted and the platform-stored
+opaque artifact is used. Accessura still receives no plaintext or DEK.
 
 ### 5. Manage listings
 
@@ -232,6 +257,8 @@ POST /api/v1/packs/:id/delist
 ```
 
 Delisting is permanent. To resume supply, publish a new Pack with a new ID.
+Use the participant receipt, not retired `/orders` or `/sales` routes, for
+direct transaction evidence.
 
 If a seller delivery miss pauses one signal, restore payout/delivery readiness
 and explicitly reopen only that signal:
