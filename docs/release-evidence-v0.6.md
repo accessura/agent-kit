@@ -4,7 +4,7 @@ Status: `rc_only`. Phase 4–7 evidence is prepared, but funded Base Sepolia and
 the required security review are not complete. No merge or tag is authorized
 by this record.
 
-Verified at: `2026-07-24T22:51:14Z`
+Verified at: `2026-07-24T23:01:00Z`
 
 ## Immutable inputs and candidate identity
 
@@ -12,10 +12,11 @@ Verified at: `2026-07-24T22:51:14Z`
 agent_kit_base_sha: 5bda81c3d61c5a53daab08af7789cdd44e023719
 consolidation_pr: https://github.com/accessura/agent-kit/pull/18
 security_head_sha: d1eae9b41c25bed41980cda25b38a782a25d731f
-candidate_sha: 92333cbc7bd4bf34c8bca6d5ec428a9c0035abac
-candidate_sha_scope: Phase 4-7 code/docs closure tree before this evidence-only record commit
-local_gate_tree: 92333cbc7bd4bf34c8bca6d5ec428a9c0035abac
-pr_head_with_evidence_sha: 0b30bb6c8f8a85532c4ba88c7cc15948597d2bb7
+candidate_sha: 441f0eb86ef6886ae476b1c5be5e4eee32150770
+candidate_sha_scope: Phase 4-7 functional code/docs tree before this evidence-only record update
+local_gate_tree: 441f0eb86ef6886ae476b1c5be5e4eee32150770
+previous_evidence_head_sha: 0b30bb6c8f8a85532c4ba88c7cc15948597d2bb7
+green_candidate_pr_head_sha: 441f0eb86ef6886ae476b1c5be5e4eee32150770
 merge_sha: pending_jc
 tag: pending_jc; currently eligible at most for v0.6.0-rc.1
 tag_sha: pending_jc
@@ -55,7 +56,7 @@ exactly 23 names, and compare the digest to
 
 ```text
 python_versions: [3.10.20, 3.12.13]
-unit_contract_result: passed; Agent Kit 83/83 on each Python; product source 53/53 on each Python
+unit_contract_result: passed; Agent Kit 84/84 on each Python; product source 53/53 on each Python
 crypto_result: passed; 6/6 executable decrypt/ECIES checks on each Python in both repositories
 skill_validation_result: passed; scripts/validate_skill_bundle.py on Python 3.10 and 3.12
 wheel_sdist_result: passed; accessura_agent_kit-0.6.0 wheel and sdist built on Python 3.10 and 3.12
@@ -132,6 +133,19 @@ mergeable: true
 review_decision: pending
 ```
 
+Agent Kit PR #18 after the final payment-guidance and Skill-validator
+consistency pass, at
+`441f0eb86ef6886ae476b1c5be5e4eee32150770`:
+
+```text
+clean-install (3.10): success
+clean-install (3.12): success
+validate: success
+draft: true
+mergeable: true
+review_decision: pending
+```
+
 Product PR #364 at
 `8f2b0e47ce5d20cdf6d2af3b91df9d2b46c6cab3`:
 
@@ -144,12 +158,10 @@ mergeable: true
 review_decision: pending
 ```
 
-These CI results are bound to the supplied security heads. Candidate
-`92333cbc7bd4bf34c8bca6d5ec428a9c0035abac` was then pushed with this evidence
-record at PR head `0b30bb6c8f8a85532c4ba88c7cc15948597d2bb7`;
-fresh `clean-install (3.10)`, `clean-install (3.12)`, and `validate` checks all
-passed. The commit that records this result changes only this Markdown
-evidence file.
+These CI results are bound to the listed heads. Candidate
+`441f0eb86ef6886ae476b1c5be5e4eee32150770` received fresh successful
+`clean-install (3.10)`, `clean-install (3.12)`, and `validate` checks. The
+commit that records this result changes only this Markdown evidence file.
 
 ## Funded and review gates
 
@@ -181,12 +193,18 @@ Files added or updated on top of the supplied candidate:
 
 ```text
 .github/workflows/package.yml
+README.md
+accessura/SKILL.md
+accessura/references/trading.md
+accessura_sdk/README.md
 catalog_contract.py
 docs/branch-closure-drafts.md
 docs/exact-mcp-tool-manifest-v0.6.json
 docs/funded-base-sepolia-validation.md
 docs/release-evidence-v0.6.md
 docs/security-review-checklist.md
+examples/example_buyer.py
+scripts/validate_skill_bundle.py
 scripts/verify_funded_testnet_evidence.py
 tests/test_catalog_contract.py
 ```
