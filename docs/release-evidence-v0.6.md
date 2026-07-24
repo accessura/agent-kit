@@ -15,6 +15,7 @@ security_head_sha: d1eae9b41c25bed41980cda25b38a782a25d731f
 candidate_sha: 92333cbc7bd4bf34c8bca6d5ec428a9c0035abac
 candidate_sha_scope: Phase 4-7 code/docs closure tree before this evidence-only record commit
 local_gate_tree: 92333cbc7bd4bf34c8bca6d5ec428a9c0035abac
+pr_head_with_evidence_sha: 0b30bb6c8f8a85532c4ba88c7cc15948597d2bb7
 merge_sha: pending_jc
 tag: pending_jc; currently eligible at most for v0.6.0-rc.1
 tag_sha: pending_jc
@@ -119,6 +120,18 @@ mergeable: true
 review_decision: pending
 ```
 
+Agent Kit PR #18 after the Phase 4–7 closure overlay, at
+`0b30bb6c8f8a85532c4ba88c7cc15948597d2bb7`:
+
+```text
+clean-install (3.10): success
+clean-install (3.12): success
+validate: success
+draft: true
+mergeable: true
+review_decision: pending
+```
+
 Product PR #364 at
 `8f2b0e47ce5d20cdf6d2af3b91df9d2b46c6cab3`:
 
@@ -132,9 +145,11 @@ review_decision: pending
 ```
 
 These CI results are bound to the supplied security heads. Candidate
-`92333cbc7bd4bf34c8bca6d5ec428a9c0035abac` must be pushed and receive fresh
-required checks before merge; this record does not treat the earlier green
-checks as checks on the closure candidate.
+`92333cbc7bd4bf34c8bca6d5ec428a9c0035abac` was then pushed with this evidence
+record at PR head `0b30bb6c8f8a85532c4ba88c7cc15948597d2bb7`;
+fresh `clean-install (3.10)`, `clean-install (3.12)`, and `validate` checks all
+passed. The commit that records this result changes only this Markdown
+evidence file.
 
 ## Funded and review gates
 
