@@ -13,7 +13,7 @@ buyer = BuyerAgent("0xPRIVATE_KEY")
 buyer.register("My Trading Agent")
 buyer.get_api_key()
 
-packs = buyer.search("Norway", info_type="structured")
+packs = buyer.search("election", info_type="structured")
 bid = buyer.bid(packs[0]["id"], packs[0]["signals"][0]["id"], 0.15)
 buyer.settle(packs[0]["id"], packs[0]["signals"][0]["id"])
 

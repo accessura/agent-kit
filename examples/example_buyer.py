@@ -55,7 +55,7 @@ def main():
 
     # 4. Search for packs
     print("\n── 4. Search ──")
-    packs = agent.search("Norway", limit=5)
+    packs = agent.search("election", limit=5)
     print(f"   Found {len(packs)} packs")
     for p in packs[:3]:
         print(f"   [{p.get('infoType')}] {p['title'][:70]}")

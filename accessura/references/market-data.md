@@ -51,7 +51,7 @@ GET /api/v1/topics?state=active
 
 Pick the `slug` of your target market, then search for packs on it.
 Sector is a human-UI navigation taxonomy and is intentionally absent from the
-Agent API. Do not send a `sector` query or expect `sectorSlugs`.
+Agent API. Do not send a `sector` query or expect Sector-derived response fields.
 
 ---
 

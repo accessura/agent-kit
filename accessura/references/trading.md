@@ -187,7 +187,7 @@ Content-Type: application/json
   "title": "Time-sensitive market signal",
   "summary": "Why it is useful without revealing the result.",
   "info_type": "text",
-  "topic": "current-market",
+  "topic": "<current-politics-or-sports-topic-slug>",
   "topic_slugs": ["<current-politics-or-sports-topic-slug>"],
   "source_declaration": "Seller-declared source",
   "preview": ["Observation method", "Freshness window"],

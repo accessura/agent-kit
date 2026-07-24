@@ -9,7 +9,8 @@ Usage:
 Register with Claude Code:
     claude mcp add accessura -- accessura-mcp
 
-Project .mcp.json:
+Project .mcp.json (local only):
+    Do not commit a .mcp.json containing private keys or other credentials.
     {
       "mcpServers": {
         "accessura": {
@@ -38,8 +39,10 @@ instructions to follow.
 import functools
 import json
 import sys
+from typing import Annotated, Literal
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from catalog_contract import (
     normalize_signal_schema,
@@ -295,10 +298,10 @@ async def packs_get(pack_id: str) -> str:
 @safe("packs.publish")
 async def packs_publish(
     title: str,
-    info_type: str,
-    topic_slugs: list[str],
+    info_type: Literal["structured", "text", "figure", "video", "audio"],
+    topic_slugs: Annotated[list[str], Field(min_length=1, max_length=20)],
     fields_json: str,
-    signal_type: str,
+    signal_type: Literal["structured-data", "narrative-intel"],
     signal_schema: dict[str, str],
     summary: str = "",
     source_declaration: str = "",

@@ -8,7 +8,7 @@
     agent = BuyerAgent(private_key="0x...")
     agent.register("My Agent")
     agent.get_api_key()
-    packs = agent.search("Norway")
+    packs = agent.search("election")
     agent.bid(pack_id, signal_id, 0.15)
 
     # Seller
@@ -843,7 +843,35 @@ class SellerAgent:
 
     def publish_pack(self, title: str, info_type: str, **kwargs) -> dict:
         """Publish a new data pack. DO NOT include signals — append separately."""
-        body = {"title": title, "info_type": info_type, **kwargs}
+        from catalog_contract import (
+            normalize_signal_schema,
+            normalize_topic_slugs,
+            validate_publish_contract,
+        )
+
+        topic_slugs = normalize_topic_slugs(kwargs.get("topic_slugs"))
+        signal_type = kwargs.get("signal_type")
+        signal_schema = normalize_signal_schema(kwargs.get("signal_schema"))
+        fields = kwargs.get("fields")
+        if not isinstance(fields, dict):
+            raise RuntimeError("fields must be a JSON object")
+        delivery_format = validate_publish_contract(
+            info_type=info_type,
+            topic_slugs=topic_slugs,
+            signal_type=signal_type,
+            signal_schema=signal_schema,
+            fields=fields,
+        )
+        body = {
+            "title": title,
+            "info_type": info_type,
+            **kwargs,
+            "topic": topic_slugs[0],
+            "topic_slugs": topic_slugs,
+            "signal_type": signal_type,
+            "signal_schema": signal_schema,
+        }
+        body.setdefault("delivery_format", delivery_format)
         return _request("POST", f"{self.api}/packs", self._auth(), body)
 
     def delist_pack(self, pack_id: str) -> dict:

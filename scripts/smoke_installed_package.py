@@ -8,35 +8,8 @@ import importlib.metadata
 import json
 
 import server
-from catalog_contract import CATALOG_VERSION
+from catalog_contract import CATALOG_VERSION, EXPECTED_MCP_TOOLS
 from accessura_sdk import BuyerAgent, SellerAgent
-
-
-EXPECTED_TOOLS = {
-    "auth_apikey",
-    "auth_register",
-    "auth_token",
-    "bids_place",
-    "bids_status",
-    "catalog_get",
-    "claims_decrypt",
-    "claims_deliver",
-    "claims_list",
-    "claims_pay",
-    "claims_receipt",
-    "claims_settle",
-    "leaderboard_get",
-    "packs_delist",
-    "packs_get",
-    "packs_publish",
-    "packs_search",
-    "payments_readiness",
-    "seller_payout_bind",
-    "seller_signal_reopen",
-    "signals_append",
-    "topics_list",
-    "topics_packs",
-}
 
 
 async def tool_names() -> set[str]:
@@ -49,15 +22,15 @@ def main() -> None:
     if version != "0.6.0":
         raise SystemExit(f"unexpected installed version: {version}")
     names = asyncio.run(tool_names())
-    if names != EXPECTED_TOOLS:
+    if names != EXPECTED_MCP_TOOLS:
         raise SystemExit(
-            f"MCP tool mismatch: missing={sorted(EXPECTED_TOOLS - names)}, "
-            f"extra={sorted(names - EXPECTED_TOOLS)}"
+            f"MCP tool mismatch: missing={sorted(EXPECTED_MCP_TOOLS - names)}, "
+            f"extra={sorted(names - EXPECTED_MCP_TOOLS)}"
         )
-    buyer = BuyerAgent("0x" + "11" * 32, base_url="https://worldcup.example")
+    buyer = BuyerAgent("0x" + "11" * 32, base_url="https://market.example")
     seller = SellerAgent(
         "0x" + "22" * 32,
-        base_url="https://worldcup.example",
+        base_url="https://market.example",
         delivery_secret="ab" * 32,
     )
     readiness = buyer.payment_readiness()

@@ -386,3 +386,380 @@ def test_mcp_surface_is_exact_23_tool_contract():
     assert {
         "packs_relist", "orders_list", "sales_list",
     }.isdisjoint(names)
+
+
+def test_mcp_surface_equals_the_shared_exact_manifest():
+    from catalog_contract import EXPECTED_MCP_TOOLS
+
+    names = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
+    assert names == EXPECTED_MCP_TOOLS
+
+
+def test_mcp_publish_schema_exposes_contract_bounds_and_enums():
+    publish = next(
+        tool for tool in asyncio.run(server.mcp.list_tools())
+        if tool.name == "packs_publish"
+    )
+    properties = publish.inputSchema["properties"]
+    assert properties["topic_slugs"]["minItems"] == 1
+    assert properties["topic_slugs"]["maxItems"] == 20
+    assert properties["info_type"]["enum"] == list(INFO_TYPES)
+    assert properties["signal_type"]["enum"] == list(SIGNAL_TYPES)
+
+
+@pytest.mark.parametrize(
+    "topic_slugs,signal_schema,signal_type,error",
+    [
+        ([f"market-{index}" for index in range(21)], VALID_SCHEMA, "narrative-intel", "1-20"),
+        (["market-one"], None, "narrative-intel", "signal_schema"),
+        (["market-one,market-two"], VALID_SCHEMA, "narrative-intel", "one non-empty"),
+        (["market-one"], VALID_SCHEMA, "unsupported-signal", "signal_type"),
+    ],
+)
+def test_sdk_publish_rejects_invalid_contract_before_network(
+    monkeypatch, topic_slugs, signal_schema, signal_type, error
+):
+    import accessura_sdk.client as sdk_client
+    from accessura_sdk import SellerAgent
+
+    monkeypatch.setattr(
+        sdk_client,
+        "_request",
+        lambda *_args, **_kwargs: pytest.fail("invalid publish reached the network"),
+    )
+    seller = SellerAgent("0x" + "22" * 32, delivery_secret="ab" * 32)
+    kwargs = {
+        "topic_slugs": topic_slugs,
+        "fields": {
+            "word_count": 100,
+            "language": "en",
+            "source_url": "https://seller.example/source",
+        },
+        "signal_type": signal_type,
+    }
+    if signal_schema is not None:
+        kwargs["signal_schema"] = signal_schema
+    with pytest.raises(RuntimeError, match=error):
+        seller.publish_pack("Election signal", "text", **kwargs)
+
+
+def test_sdk_publish_normalizes_body_and_derives_topic_alias(monkeypatch):
+    import accessura_sdk.client as sdk_client
+    from accessura_sdk import SellerAgent
+
+    captured = {}
+
+    def fake_request(method, url, headers, body=None):
+        captured.update(method=method, url=url, headers=headers, body=body)
+        return {"ok": True, "pack_id": "pack-one"}
+
+    monkeypatch.setattr(sdk_client, "_request", fake_request)
+    seller = SellerAgent(
+        "0x" + "22" * 32,
+        delivery_secret="ab" * 32,
+        api_key="acc_saved",
+    )
+    result = seller.publish_pack(
+        "Election signal",
+        "text",
+        topic="caller-supplied-alias",
+        topic_slugs=[" election-market ", "sports-market"],
+        fields={
+            "word_count": 100,
+            "language": "en",
+            "source_url": "https://seller.example/source",
+        },
+        signal_type="narrative-intel",
+        signal_schema={" status ": " string "},
+    )
+
+    assert result["pack_id"] == "pack-one"
+    assert captured["method"] == "POST"
+    assert captured["body"]["topic"] == "election-market"
+    assert captured["body"]["topic_slugs"] == [
+        "election-market",
+        "sports-market",
+    ]
+    assert captured["body"]["signal_schema"] == {"status": "string"}
+    assert captured["body"]["delivery_format"] == "markdown"
+
+
+def test_topic_queries_are_sector_free_in_wrapper_and_sdk(monkeypatch):
+    import urllib.parse
+
+    import accessura_sdk.client as sdk_client
+    from accessura_sdk import BuyerAgent, SellerAgent
+
+    wrapper_calls = []
+
+    async def fake_get(path, params=None):
+        wrapper_calls.append((path, params))
+        return {"topics": []}
+
+    monkeypatch.setattr(client_wrapper, "_get", fake_get)
+    asyncio.run(client_wrapper.list_topics(category="sports", state="past"))
+    assert wrapper_calls == [
+        ("/topics", {"state": "past", "category": "sports"})
+    ]
+
+    sdk_urls = []
+
+    def fake_request(method, url, headers, body=None):
+        sdk_urls.append(url)
+        return {"topics": []}
+
+    monkeypatch.setattr(sdk_client, "_request", fake_request)
+    BuyerAgent("0x" + "11" * 32).list_topics(
+        category="politics", state="active"
+    )
+    SellerAgent(
+        "0x" + "22" * 32,
+        delivery_secret="ab" * 32,
+    ).list_topics(category="politics", state="active")
+
+    assert len(sdk_urls) == 2
+    for url in sdk_urls:
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        assert query == {"state": ["active"], "category": ["politics"]}
+        assert "sector" not in query
+
+
+def test_signal_schema_cannot_satisfy_pack_required_fields():
+    with pytest.raises(RuntimeError, match="word_count, language, source_url"):
+        validate_publish_contract(
+            info_type="text",
+            topic_slugs=["election-market"],
+            signal_type="narrative-intel",
+            signal_schema={
+                "word_count": "integer",
+                "language": "string",
+                "source_url": "string",
+            },
+            fields={},
+        )
+
+
+def test_signal_contract_pins_scope_and_public_fields():
+    assert SIGNAL_CONTRACT["scope"] == (
+        "One Pack-level payload contract shared by every Signal in that Pack"
+    )
+    assert SIGNAL_CONTRACT["publicSignalFields"] == [
+        "id",
+        "label",
+        "summary",
+        "source",
+        "observedAt",
+        "confidence",
+        "topicSlugs",
+    ]
+
+
+def test_skill_validator_checks_both_package_versions(tmp_path):
+    from scripts import validate_skill_bundle
+
+    root_project = tmp_path / "pyproject.toml"
+    sdk_project = tmp_path / "sdk-pyproject.toml"
+    root_project.write_text('[project]\nversion = "0.6.0"\n')
+    sdk_project.write_text('[project]\nversion = "0.6.1"\n')
+
+    with pytest.raises(SystemExit):
+        validate_skill_bundle.validate_project_versions(
+            "0.6.0", (root_project, sdk_project)
+        )
+
+
+def test_skill_validator_scans_references_readme_and_examples(tmp_path):
+    from scripts import validate_skill_bundle
+
+    paths = {
+        path.relative_to(validate_skill_bundle.ROOT).as_posix()
+        for path in validate_skill_bundle.forbidden_scan_files()
+    }
+    assert "README.md" in paths
+    assert "accessura/references/authentication.md" in paths
+    assert "accessura/references/market-data.md" in paths
+    assert "accessura/references/trading.md" in paths
+    assert "examples/example_buyer.py" in paths
+
+    forbidden = tmp_path / "example.md"
+    forbidden.write_text("orders_list")
+    with pytest.raises(SystemExit):
+        validate_skill_bundle.validate_forbidden_text((forbidden,))
+
+
+def test_kit_keeps_all_five_stable_version_pins():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    assert 'version = "0.6.0"' in (root / "pyproject.toml").read_text()
+    assert 'version = "0.6.0"' in (
+        root / "accessura_sdk" / "pyproject.toml"
+    ).read_text()
+    assert (root / "accessura" / "VERSION").read_text().strip() == "0.6.0"
+    assert "@v0.6.0" in (root / "README.md").read_text()
+    assert "@v0.6.0" in (root / "server.py").read_text()
+
+
+def test_broken_repo_external_javascript_examples_are_removed():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    assert not (root / "examples" / "agent-protocol-quickstart.mjs").exists()
+    assert not (root / "examples" / "seller-readiness-dry-run.mjs").exists()
+
+
+def test_local_mcp_config_is_ignored_and_documented_as_secret_bearing():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    assert ".mcp.json" in (root / ".gitignore").read_text().splitlines()
+    assert "Do not commit" in (root / "README.md").read_text()
+    assert "Do not commit" in (root / "server.py").read_text()
+
+
+def test_trading_example_derives_topic_alias_from_first_slug():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    trading = (
+        root / "accessura" / "references" / "trading.md"
+    ).read_text()
+    assert '"topic": "<current-politics-or-sports-topic-slug>"' in trading
+
+
+def test_active_fixtures_use_neutral_market_language():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    legacy_host = "worldcup" + ".example"
+    legacy_query = "Nor" + "way"
+    files = [
+        root / "accessura_sdk" / "__init__.py",
+        root / "accessura_sdk" / "client.py",
+        root / "accessura_sdk" / "README.md",
+        root / "examples" / "example_buyer.py",
+        root / "scripts" / "smoke_installed_package.py",
+        root / "tests" / "test_direct_sdk.py",
+    ]
+    for path in files:
+        text = path.read_text()
+        assert legacy_host not in text
+        assert legacy_query not in text
+
+
+def _valid_funded_evidence():
+    buyer = "0x" + "11" * 20
+    seller = "0x" + "22" * 20
+    tx_hash = "0x" + "ab" * 32
+    return {
+        "network": "eip155:84532",
+        "claim_id": "claim-funded-one",
+        "buyer_address": buyer,
+        "seller_payout_address": seller,
+        "platform_addresses": ["0x" + "33" * 20],
+        "bid": {
+            "buyer_usdc_before": "1000000",
+            "buyer_usdc_after": "1000000",
+            "transfer_count": 0,
+        },
+        "award": {
+            "state": "award_pending_delivery",
+            "payment_tx_hash": None,
+        },
+        "pre_delivery_payment": {"http_status": 202},
+        "delivery_ready_payment": {
+            "http_status": 402,
+            "pay_to": seller,
+            "amount": "150000",
+        },
+        "preview": {
+            "confirm_real_payment": False,
+            "payment_performed": False,
+            "buyer_usdc_before": "1000000",
+            "buyer_usdc_after": "1000000",
+            "transfer_count": 0,
+        },
+        "payment": {
+            "confirm_real_payment": True,
+            "transfers": [{
+                "tx_hash": tx_hash,
+                "from": buyer,
+                "to": seller,
+                "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                "amount": "150000",
+            }],
+        },
+        "decrypt": {
+            "local": True,
+            "plaintext_sha256": "cd" * 32,
+        },
+        "retry": {
+            "payment_tx_hash": tx_hash,
+            "new_transfer_count": 0,
+        },
+        "receipt": {
+            "claim_id": "claim-funded-one",
+            "payment_tx_hash": tx_hash,
+        },
+    }
+
+
+def test_funded_evidence_verifier_covers_all_nine_release_assertions():
+    from scripts.verify_funded_testnet_evidence import (
+        REQUIRED_ASSERTIONS,
+        validate_evidence,
+    )
+
+    assert validate_evidence(_valid_funded_evidence()) == list(
+        REQUIRED_ASSERTIONS
+    )
+
+
+def test_funded_evidence_verifier_rejects_duplicate_payment():
+    from scripts.verify_funded_testnet_evidence import (
+        EvidenceError,
+        validate_evidence,
+    )
+
+    evidence = _valid_funded_evidence()
+    evidence["payment"]["transfers"].append(
+        dict(evidence["payment"]["transfers"][0])
+    )
+    with pytest.raises(EvidenceError, match="exactly one"):
+        validate_evidence(evidence)
+
+
+def test_ci_paths_cover_expanded_skill_and_funded_gates():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    skill_workflow = (
+        root / ".github" / "workflows" / "validate-skill.yml"
+    ).read_text()
+    package_workflow = (
+        root / ".github" / "workflows" / "package.yml"
+    ).read_text()
+    assert '"accessura_sdk/pyproject.toml"' in skill_workflow
+    assert '"examples/**"' in skill_workflow
+    assert '"scripts/verify_funded_testnet_evidence.py"' in package_workflow
+
+
+def test_sdk_publish_rejects_unknown_info_type_before_network(monkeypatch):
+    import accessura_sdk.client as sdk_client
+    from accessura_sdk import SellerAgent
+
+    monkeypatch.setattr(
+        sdk_client,
+        "_request",
+        lambda *_args, **_kwargs: pytest.fail("invalid publish reached the network"),
+    )
+    seller = SellerAgent("0x" + "22" * 32, delivery_secret="ab" * 32)
+    with pytest.raises(RuntimeError, match="info_type"):
+        seller.publish_pack(
+            "Election signal",
+            "database",
+            topic_slugs=["election-market"],
+            fields={},
+            signal_type="narrative-intel",
+            signal_schema=VALID_SCHEMA,
+        )

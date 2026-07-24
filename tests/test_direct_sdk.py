@@ -27,7 +27,7 @@ ASSET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
 
 
 def test_bid_authorization_recovers_buyer_and_matches_js_strings():
-    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://worldcup.example")
+    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://market.example")
     authorization = _sign_bid_authorization(
         buyer._account,
         buyer._enc_pub,
@@ -58,7 +58,7 @@ def test_x402_header_is_exact_base_usdc_transfer_authorization():
     buyer = Account.from_key(PRIVATE_KEY)
     required = {
         "x402Version": 2,
-        "resource": {"url": "https://worldcup.example/api/v1/claims/claim-1/pay"},
+        "resource": {"url": "https://market.example/api/v1/claims/claim-1/pay"},
         "accepts": [{
             "scheme": "exact",
             "network": "eip155:8453",
@@ -109,7 +109,7 @@ def test_x402_header_accepts_exact_base_sepolia_test_usdc_challenge():
     buyer = Account.from_key(PRIVATE_KEY)
     required = {
         "x402Version": 2,
-        "resource": {"url": "https://worldcup.example/api/v1/claims/claim-sepolia/pay"},
+        "resource": {"url": "https://market.example/api/v1/claims/claim-sepolia/pay"},
         "accepts": [{
             "scheme": "exact",
             "network": "eip155:84532",
@@ -152,7 +152,7 @@ def test_x402_signer_rejects_unsupported_network_asset_or_domain():
     buyer = Account.from_key(PRIVATE_KEY)
     required = {
         "x402Version": 2,
-        "resource": {"url": "https://worldcup.example/api/v1/claims/claim-1/pay"},
+        "resource": {"url": "https://market.example/api/v1/claims/claim-1/pay"},
         "accepts": [{
             "scheme": "exact",
             "network": "eip155:1",
@@ -177,7 +177,7 @@ def test_x402_signer_rejects_unsupported_network_asset_or_domain():
 
 
 def test_external_ciphertext_fetch_never_forwards_accessura_auth(monkeypatch):
-    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://worldcup.example")
+    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://market.example")
     buyer._api_key = "acc_secret"
     calls = []
 
@@ -223,14 +223,14 @@ def test_claim_lists_use_bearer_when_api_key_is_also_present(monkeypatch):
     import accessura_sdk.client as client
     monkeypatch.setattr(client, "_HTTPX", Httpx())
 
-    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://worldcup.example")
+    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://market.example")
     buyer._api_key = "acc_buyer"
     buyer._token = "jwt_buyer"
     assert buyer.get_claims() == []
 
     seller = SellerAgent(
         "0x" + "22" * 32,
-        base_url="https://worldcup.example",
+        base_url="https://market.example",
         delivery_secret="ab" * 32,
     )
     seller._api_key = "acc_seller"
@@ -270,7 +270,7 @@ def test_managed_seller_append_returns_only_its_local_ciphertext(monkeypatch):
     monkeypatch.setattr(client, "_HTTPX", Httpx())
     seller = SellerAgent(
         "0x" + "22" * 32,
-        base_url="https://worldcup.example",
+        base_url="https://market.example",
         delivery_secret="ab" * 32,
     )
     seller._token = "jwt_seller"

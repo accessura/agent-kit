@@ -9,6 +9,31 @@ from typing import Any
 CATALOG_VERSION = "2026-07-17.pack-signal-read-contract"
 INFO_TYPES = ("structured", "text", "figure", "video", "audio")
 SIGNAL_TYPES = ("structured-data", "narrative-intel")
+EXPECTED_MCP_TOOLS = frozenset({
+    "auth_apikey",
+    "auth_register",
+    "auth_token",
+    "bids_place",
+    "bids_status",
+    "catalog_get",
+    "claims_decrypt",
+    "claims_deliver",
+    "claims_list",
+    "claims_pay",
+    "claims_receipt",
+    "claims_settle",
+    "leaderboard_get",
+    "packs_delist",
+    "packs_get",
+    "packs_publish",
+    "packs_search",
+    "payments_readiness",
+    "seller_payout_bind",
+    "seller_signal_reopen",
+    "signals_append",
+    "topics_list",
+    "topics_packs",
+})
 DELIVERY_FORMATS = {"structured": "json", "text": "markdown", "figure": "image", "video": "video", "audio": "audio"}
 MIN_TOPIC_SLUGS = 1
 MAX_TOPIC_SLUGS = 20
@@ -29,7 +54,17 @@ SIGNAL_CONTRACT = {
     "requiredForBiddablePacks": True,
     "schemaField": "signal_schema",
     "typeField": "signal_type",
+    "scope": "One Pack-level payload contract shared by every Signal in that Pack",
     "separateFrom": "fields (Pack delivery/container metadata)",
+    "publicSignalFields": [
+        "id",
+        "label",
+        "summary",
+        "source",
+        "observedAt",
+        "confidence",
+        "topicSlugs",
+    ],
 }
 
 

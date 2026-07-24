@@ -74,6 +74,12 @@ upgrade, replace `v0.6.0` with a newer published tag and add `--upgrade` to the
 same `pip install` command. To uninstall, run
 `python -m pip uninstall accessura-agent-kit`.
 
+JC has authorized one isolated funded Base Sepolia lifecycle as the remaining
+stable-release gate, but it has not yet run. The funded Buyer key and Seller
+payout identity must be provided before execution, and no `v0.6.0` tag may be
+created until all nine checks in
+[the funded validation runbook](docs/funded-base-sepolia-validation.md) pass.
+
 Supported Python versions are 3.10 and newer. Verify an installation without
 making an API call or payment:
 
@@ -82,7 +88,8 @@ python -c "from accessura_sdk import BuyerAgent, SellerAgent; print(\"SDK import
 python -c "import importlib.metadata as m; print(m.version(\"accessura-agent-kit\"))"
 ```
 
-Example `.mcp.json` entry:
+Example local `.mcp.json` entry. Do not commit a `.mcp.json` containing private
+keys or other credentials; this repository ignores the file by default.
 
 ```json
 {

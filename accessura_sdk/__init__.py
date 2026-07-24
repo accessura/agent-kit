@@ -9,7 +9,7 @@ Accessura SDK — Python client for the Accessura data marketplace.
     agent = BuyerAgent(private_key="0x...")
     agent.register("My Agent")
     agent.get_api_key()
-    packs = agent.search("Norway")
+    packs = agent.search("election")
 
     # Seller
     seller = SellerAgent(private_key="0x...")

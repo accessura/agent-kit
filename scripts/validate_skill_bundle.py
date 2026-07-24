@@ -24,6 +24,10 @@ FORBIDDEN_TEXT = (
     "packs_relist",
     "sectorSlugs",
 )
+PACKAGE_VERSION_FILES = (
+    ROOT / "pyproject.toml",
+    ROOT / "accessura_sdk" / "pyproject.toml",
+)
 
 
 def fail(message: str) -> None:
@@ -74,15 +78,54 @@ def validate_links(text: str) -> None:
         fail(f"SKILL.md does not link required references: {sorted(missing)}")
 
 
+def forbidden_scan_files() -> tuple[Path, ...]:
+    files = [
+        SKILL_FILE,
+        *(SKILL_DIR / "references").glob("*.md"),
+        ROOT / "README.md",
+        *(path for path in (ROOT / "examples").rglob("*") if path.is_file()),
+    ]
+    return tuple(sorted(set(files)))
+
+
+def validate_forbidden_text(paths: tuple[Path, ...]) -> None:
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        try:
+            label = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            label = str(path)
+        for forbidden in FORBIDDEN_TEXT:
+            if forbidden in text:
+                fail(f"{label} contains forbidden source/retired text: {forbidden}")
+
+
+def project_version(path: Path) -> str:
+    match = re.search(
+        r'^version\s*=\s*"([^"]+)"\s*$',
+        path.read_text(encoding="utf-8"),
+        flags=re.MULTILINE,
+    )
+    if not match:
+        fail(f"package version is missing from {path}")
+    return match.group(1)
+
+
+def validate_project_versions(
+    skill_version: str,
+    project_files: tuple[Path, ...] = PACKAGE_VERSION_FILES,
+) -> None:
+    for path in project_files:
+        if project_version(path) != skill_version:
+            fail(f"Skill VERSION must match the package version in {path}")
+
+
 def main() -> None:
     if not SKILL_FILE.is_file():
         fail("accessura/SKILL.md is missing")
     text = SKILL_FILE.read_text(encoding="utf-8")
     parse_frontmatter(text)
     validate_links(text)
-    for forbidden in FORBIDDEN_TEXT:
-        if forbidden in text:
-            fail(f"SKILL.md contains private/source-tree dependency: {forbidden}")
     version_file = SKILL_DIR / "VERSION"
     expected = {SKILL_FILE, SKILL_DIR / "agents/openai.yaml", version_file}
     expected.update(SKILL_DIR / item for item in REQUIRED_REFERENCES)
@@ -92,14 +135,8 @@ def main() -> None:
     skill_version = version_file.read_text(encoding="utf-8").strip()
     if not re.fullmatch(r"\d+\.\d+\.\d+", skill_version):
         fail("VERSION must contain a semantic version")
-    project_text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    project_version_match = re.search(
-        r'^version\s*=\s*"([^"]+)"\s*$',
-        project_text,
-        flags=re.MULTILINE,
-    )
-    if not project_version_match or project_version_match.group(1) != skill_version:
-        fail("Skill VERSION must match the package version in pyproject.toml")
+    validate_forbidden_text(forbidden_scan_files())
+    validate_project_versions(skill_version)
     print("Accessura Skill bundle is valid")
 
 

@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "accessura/**"
+      - "accessura_sdk/pyproject.toml"
+      - "examples/**"
       - "scripts/validate_skill_bundle.py"
       - ".github/workflows/validate-skill.yml"
       - "README.md"
@@ -14,6 +16,8 @@ on:
       - "v*"
     paths:
       - "accessura/**"
+      - "accessura_sdk/pyproject.toml"
+      - "examples/**"
       - "scripts/validate_skill_bundle.py"
       - ".github/workflows/validate-skill.yml"
       - "README.md"

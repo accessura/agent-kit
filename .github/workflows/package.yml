@@ -9,6 +9,7 @@ on:
       - "pyproject.toml"
       - "scripts/smoke_installed_package.py"
       - "scripts/check_catalog_parity.py"
+      - "scripts/verify_funded_testnet_evidence.py"
       - "catalog_contract.py"
       - "tests/**"
       - ".github/workflows/package.yml"
