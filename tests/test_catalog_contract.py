@@ -1,6 +1,8 @@
 import asyncio
 import copy
+import importlib.util
 import json
+from pathlib import Path
 
 import pytest
 
@@ -22,6 +24,15 @@ from catalog_contract import (
 )
 
 VALID_SCHEMA = {"status": "string", "observed_at": "datetime"}
+
+
+def load_repo_script(name):
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"_repo_script_{name}", script_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def pinned_catalog():
@@ -555,7 +566,7 @@ def test_signal_contract_pins_scope_and_public_fields():
 
 
 def test_skill_validator_checks_both_package_versions(tmp_path):
-    from scripts import validate_skill_bundle
+    validate_skill_bundle = load_repo_script("validate_skill_bundle")
 
     root_project = tmp_path / "pyproject.toml"
     sdk_project = tmp_path / "sdk-pyproject.toml"
@@ -569,7 +580,7 @@ def test_skill_validator_checks_both_package_versions(tmp_path):
 
 
 def test_skill_validator_scans_references_readme_and_examples(tmp_path):
-    from scripts import validate_skill_bundle
+    validate_skill_bundle = load_repo_script("validate_skill_bundle")
 
     paths = {
         path.relative_to(validate_skill_bundle.ROOT).as_posix()
@@ -705,28 +716,22 @@ def _valid_funded_evidence():
 
 
 def test_funded_evidence_verifier_covers_all_nine_release_assertions():
-    from scripts.verify_funded_testnet_evidence import (
-        REQUIRED_ASSERTIONS,
-        validate_evidence,
-    )
+    verifier = load_repo_script("verify_funded_testnet_evidence")
 
-    assert validate_evidence(_valid_funded_evidence()) == list(
-        REQUIRED_ASSERTIONS
+    assert verifier.validate_evidence(_valid_funded_evidence()) == list(
+        verifier.REQUIRED_ASSERTIONS
     )
 
 
 def test_funded_evidence_verifier_rejects_duplicate_payment():
-    from scripts.verify_funded_testnet_evidence import (
-        EvidenceError,
-        validate_evidence,
-    )
+    verifier = load_repo_script("verify_funded_testnet_evidence")
 
     evidence = _valid_funded_evidence()
     evidence["payment"]["transfers"].append(
         dict(evidence["payment"]["transfers"][0])
     )
-    with pytest.raises(EvidenceError, match="exactly one"):
-        validate_evidence(evidence)
+    with pytest.raises(verifier.EvidenceError, match="exactly one"):
+        verifier.validate_evidence(evidence)
 
 
 def test_ci_paths_cover_expanded_skill_and_funded_gates():
