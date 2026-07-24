@@ -35,6 +35,7 @@ from accessura_sdk.crypto import (
 )
 from accessura_sdk.client import (
     DEFAULT_X402_NETWORK,
+    _assert_safe_auth_challenge,
     _payment_readiness,
     _sign_bid_authorization,
     _sign_x402_payment,
@@ -275,15 +276,22 @@ async def get_transaction_receipt(claim_id: str) -> dict:
     return await _get(f"/transactions/{_quote(claim_id)}/receipt")
 
 
-async def pay_claim(claim_id: str) -> dict:
-    """Sign x402 with ACCESSURA_PRIVATE_KEY and pay the seller directly."""
+async def pay_claim(claim_id: str, expected_amount: Optional[str] = None,
+                    expected_pay_to: Optional[str] = None) -> dict:
+    """Sign x402 with ACCESSURA_PRIVATE_KEY and pay the seller directly.
+
+    expected_amount / expected_pay_to (read from a prior read-only preview) bind
+    the signature to the previewed terms; the signer refuses if they changed.
+    """
     status, _, required = await _req_response(
         "GET", f"/claims/{_quote(claim_id)}/pay")
     if status in (200, 202):
         return {**required, "_http_status": status}
     if status != 402:
         raise RuntimeError(f"HTTP {status} GET /claims/{claim_id}/pay: {required}")
-    _, payment_header = _sign_x402_payment(_account(), required)
+    _, payment_header = _sign_x402_payment(
+        _account(), required,
+        expected_amount=expected_amount, expected_pay_to=expected_pay_to)
     paid_status, _, paid = await _req_response(
         "POST", f"/claims/{_quote(claim_id)}/pay", body={},
         extra_headers={"PAYMENT-SIGNATURE": payment_header})
@@ -293,7 +301,12 @@ async def pay_claim(claim_id: str) -> dict:
 
 
 async def fetch_paid_ciphertext(ciphertext_url: str) -> dict:
-    if not ciphertext_url.startswith(f"{BASE_URL}/api/v1/"):
+    from urllib.parse import urlsplit
+
+    target = urlsplit(ciphertext_url)
+    api_origin = urlsplit(BASE_URL)
+    same_origin = (target.scheme, target.netloc) == (api_origin.scheme, api_origin.netloc)
+    if not same_origin:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 ciphertext_url,
@@ -303,7 +316,8 @@ async def fetch_paid_ciphertext(ciphertext_url: str) -> dict:
         if response.status_code >= 400:
             raise RuntimeError(f"HTTP {response.status_code} ciphertext fetch: {response.text[:300]}")
         return response.json()
-    path = ciphertext_url[len(f"{BASE_URL}/api/v1"):]
+    prefix = f"{BASE_URL}/api/v1"
+    path = ciphertext_url[len(prefix):] if ciphertext_url.startswith(prefix) else target.path
     return await _get(path)
 
 
@@ -356,9 +370,15 @@ def register_identity(agent_name: str, role: str = "buyer") -> dict:
 
 
 def _sign_typed_payload(payload: dict) -> str:
-    """EIP-712 sign a backend sign_payload with the env private key."""
+    """EIP-712 sign a backend auth challenge with the env private key.
+
+    Guarded against blind-signing: a spoofed/compromised backend (or a hostile
+    ACCESSURA_BASE_URL) must not coax the wallet into signing a disguised USDC
+    TransferWithAuthorization through an auth path. Only claims_pay moves money.
+    """
     from eth_account.messages import encode_typed_data
 
+    _assert_safe_auth_challenge(payload)
     account = _account()
     typed = encode_typed_data(
         payload["domain"],
@@ -392,6 +412,14 @@ async def get_api_key() -> dict:
     if not out.get("api_key"):
         raise RuntimeError(f"apikey exchange failed: {out.get('error') or out}")
     set_credentials(api_key=out["api_key"], token=out.get("token", ""))
+    if not TOKEN:
+        # /claims is Bearer-only; cache an immediate session token so claim
+        # polling works without a separate manual auth_token step.
+        try:
+            await get_session_token()
+            out["_bearer"] = "ready"
+        except Exception as e:  # api key still valid for non-claims routes
+            out["_bearer"] = f"deferred: run auth_token before claims_list ({e})"
     return out
 
 

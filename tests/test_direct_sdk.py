@@ -54,7 +54,7 @@ def test_bid_authorization_recovers_buyer_and_matches_js_strings():
     assert _js_number_string(1e21) == "1e+21"
 
 
-def test_x402_header_is_exact_base_usdc_transfer_authorization():
+def test_x402_header_is_exact_base_usdc_transfer_authorization(monkeypatch):
     buyer = Account.from_key(PRIVATE_KEY)
     required = {
         "x402Version": 2,
@@ -69,6 +69,11 @@ def test_x402_header_is_exact_base_usdc_transfer_authorization():
             "extra": {"name": "USD Coin", "version": "2"},
         }],
     }
+    # A fully-valid Base mainnet offer is still refused until promotion gates pass.
+    monkeypatch.delenv("ACCESSURA_ALLOW_MAINNET", raising=False)
+    with pytest.raises(RuntimeError, match="mainnet .* is closed"):
+        _sign_x402_payment(buyer, required)
+    monkeypatch.setenv("ACCESSURA_ALLOW_MAINNET", "1")
     payload, header = _sign_x402_payment(buyer, required)
     assert json.loads(base64.b64decode(header)) == payload
     assert payload["x402Version"] == 2
@@ -379,3 +384,202 @@ def test_sdk_constructors_accept_saved_credentials():
     assert buyer._bearer_auth() == {"Authorization": "Bearer jwt_saved"}
     assert seller._auth() == {"Authorization": "ApiKey acc_saved"}
     assert seller._bearer_auth() == {"Authorization": "Bearer jwt_saved"}
+
+
+# ── Signing-safety guards (blind-sign, ceiling, preview-binding, mainnet) ──
+
+def _valid_auth_challenge(agent_address: str) -> dict:
+    return {
+        "domain": PROTOCOL_DOMAIN,
+        "primaryType": "AuthChallenge",
+        "types": {"AuthChallenge": [
+            {"name": "challenge_id", "type": "string"},
+            {"name": "agent_id", "type": "string"},
+            {"name": "nonce", "type": "string"},
+            {"name": "expires_at", "type": "string"},
+        ]},
+        "message": {"challenge_id": "c1", "agent_id": agent_address,
+                    "nonce": "n", "expires_at": "2099-01-01T00:00:00Z"},
+    }
+
+
+def test_sign_auth_challenge_signs_authchallenge_and_refuses_disguised_transfer():
+    from accessura_sdk.client import _sign_auth_challenge, _assert_safe_auth_challenge
+
+    acct = Account.from_key(PRIVATE_KEY)
+    payload = _valid_auth_challenge(acct.address)
+    sig = _sign_auth_challenge(acct, payload)
+    typed = encode_typed_data(
+        payload["domain"], {"AuthChallenge": payload["types"]["AuthChallenge"]},
+        payload["message"])
+    assert Account.recover_message(typed, signature=sig).lower() == acct.address.lower()
+
+    # An EIP-3009 USDC transfer disguised as an auth challenge is refused: it
+    # carries the USD Coin token domain, not the null-contract protocol domain.
+    transfer = {
+        "domain": {"name": "USD Coin", "version": "2", "chainId": 84532,
+                   "verifyingContract": BASE_SEPOLIA_USDC},
+        "primaryType": "TransferWithAuthorization",
+        "types": {"TransferWithAuthorization": [{"name": "from", "type": "address"}]},
+        "message": {"from": acct.address},
+    }
+    with pytest.raises(RuntimeError, match="domain name"):
+        _sign_auth_challenge(acct, transfer)
+
+    # Right domain, wrong primaryType -> refused.
+    with pytest.raises(RuntimeError, match="primaryType"):
+        _assert_safe_auth_challenge({"domain": PROTOCOL_DOMAIN,
+                                     "primaryType": "SomethingElse",
+                                     "types": {}, "message": {}})
+
+    # Right domain name but non-null verifyingContract -> refused.
+    with pytest.raises(RuntimeError, match="verifyingContract"):
+        _assert_safe_auth_challenge({
+            "domain": {**PROTOCOL_DOMAIN, "verifyingContract": BASE_SEPOLIA_USDC},
+            "primaryType": "AuthChallenge", "types": {}, "message": {}})
+
+
+def test_x402_signer_enforces_ceiling_binding_and_mainnet_gate(monkeypatch):
+    from accessura_sdk.client import _sign_x402_payment, _payment_readiness
+
+    buyer = Account.from_key(PRIVATE_KEY)
+
+    def offer(amount="150000", pay_to=SELLER, network="eip155:84532",
+              asset=BASE_SEPOLIA_USDC, name="USDC"):
+        return {
+            "x402Version": 2,
+            "resource": {"url": "https://api.example/x"},
+            "accepts": [{
+                "scheme": "exact", "network": network, "asset": asset,
+                "amount": amount, "payTo": pay_to, "maxTimeoutSeconds": 60,
+                "extra": {"name": name, "version": "2"},
+            }],
+        }
+
+    monkeypatch.delenv("ACCESSURA_MAX_PAY_USDC", raising=False)  # default 100 USDC
+    with pytest.raises(RuntimeError, match="exceeds the ACCESSURA_MAX_PAY_USDC"):
+        _sign_x402_payment(buyer, offer(amount=str(200 * 10 ** 6)))
+
+    with pytest.raises(RuntimeError, match="amount changed since preview"):
+        _sign_x402_payment(buyer, offer(amount="150000"), expected_amount="140000")
+
+    other = Account.from_key("0x" + "33" * 32).address
+    with pytest.raises(RuntimeError, match="payTo changed since preview"):
+        _sign_x402_payment(buyer, offer(pay_to=SELLER), expected_pay_to=other)
+
+    payload, _ = _sign_x402_payment(
+        buyer, offer(amount="150000", pay_to=SELLER),
+        expected_amount="150000", expected_pay_to=SELLER)
+    assert payload["payload"]["authorization"]["value"] == "150000"
+
+    monkeypatch.delenv("ACCESSURA_ALLOW_MAINNET", raising=False)
+    with pytest.raises(RuntimeError, match="mainnet .* is closed"):
+        _payment_readiness(buyer, "eip155:8453")
+    monkeypatch.setenv("ACCESSURA_ALLOW_MAINNET", "1")
+    assert _payment_readiness(buyer, "eip155:8453")["network"] == "eip155:8453"
+
+    monkeypatch.setenv("ACCESSURA_MAX_PAY_USDC", "")  # ceiling disabled
+    big, _ = _sign_x402_payment(buyer, offer(amount=str(500 * 10 ** 6)))
+    assert big["payload"]["authorization"]["value"] == str(500 * 10 ** 6)
+
+
+def test_register_signs_identity_under_the_protocol_domain(monkeypatch):
+    import accessura_sdk.client as client
+
+    posted = {}
+
+    class Response:
+        def __init__(self, status, body):
+            self.status_code = status
+            self.headers = {}
+            self.text = json.dumps(body)
+
+    class Httpx:
+        def request(self, method, url, headers, content, timeout):
+            if method == "GET":
+                return Response(200, {})  # not yet registered
+            posted["body"] = json.loads(content.decode())
+            return Response(200, {"ok": True})
+
+    monkeypatch.setattr(client, "_HTTPX", Httpx())
+    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://api.example")
+    assert buyer.register(name="A", role="buyer") is True
+
+    typed = encode_typed_data(
+        PROTOCOL_DOMAIN,
+        {"IdentityRegistration": [
+            {"name": "agent_id", "type": "string"},
+            {"name": "payment_address", "type": "string"},
+            {"name": "encryption_pubkey", "type": "string"},
+        ]},
+        {"agent_id": buyer.agent_id, "payment_address": buyer.agent_id,
+         "encryption_pubkey": buyer._enc_pub})
+    recovered = Account.recover_message(typed, signature=posted["body"]["signature"])
+    assert recovered.lower() == buyer.agent_id.lower()
+
+
+def test_get_api_key_caches_immediate_bearer_when_exchange_omits_token(monkeypatch):
+    import accessura_sdk.client as client
+
+    class Response:
+        def __init__(self, body):
+            self.status_code = 200
+            self.headers = {}
+            self.text = json.dumps(body)
+
+    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://api.example")
+
+    class Httpx:
+        def request(self, method, url, headers, content, timeout):
+            body = json.loads(content.decode()) if content else {}
+            if body.get("action") == "challenge":
+                return Response({"challenge": {
+                    "challenge_id": "c1",
+                    "sign_payload": _valid_auth_challenge(buyer.agent_id)}})
+            return Response({"api_key": "acc_x"})  # exchange returns no token
+
+    monkeypatch.setattr(client, "_HTTPX", Httpx())
+
+    calls = {"login": 0}
+
+    def fake_login():
+        calls["login"] += 1
+        buyer._token = "jwt_from_login"
+
+    monkeypatch.setattr(buyer, "login", fake_login)
+    assert buyer.get_api_key() == "acc_x"
+    assert calls["login"] == 1
+    assert buyer._token == "jwt_from_login"
+
+
+def test_transaction_receipt_is_passthrough_without_local_secret_injection(monkeypatch):
+    import accessura_sdk.client as client
+
+    receipt = {
+        "claim_id": "c1",
+        "award": {"pack_id": "pack-1", "signal_id": "sig-1"},
+        "payment": {"amount": "150000", "payTo": SELLER, "network": "eip155:84532",
+                    "tx_hash": "0xabc"},
+        "delivery": {"opaque": True},
+    }
+
+    class Response:
+        status_code = 200
+        headers = {}
+        text = json.dumps(receipt)
+
+    class Httpx:
+        def request(self, method, url, headers, content, timeout):
+            assert "/transactions/" in url and url.endswith("/receipt")
+            return Response()
+
+    monkeypatch.setattr(client, "_HTTPX", Httpx())
+    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://api.example", token="jwt")
+    out = buyer.get_transaction_receipt("c1")
+    assert out == receipt
+    blob = json.dumps(out).lower()
+    assert PRIVATE_KEY.lower() not in blob
+    assert "11" * 32 not in blob
+    for leaked in ("private_key", "delivery_secret", "\"dek\"", "plaintext",
+                   "payment-signature"):
+        assert leaked not in blob

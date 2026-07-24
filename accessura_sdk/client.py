@@ -146,6 +146,94 @@ BID_AUTHORIZATION_TYPES = {
 }
 
 
+# ── Signing-safety guards ─────────────────────────────────────────────────
+
+AUTH_CHALLENGE_PRIMARY_TYPES = frozenset({
+    "AuthChallenge",
+    "IdentityRegistration",
+    "SellerPayoutBinding",
+})
+
+
+def _assert_safe_auth_challenge(payload: Any) -> None:
+    """Refuse to blind-sign a backend-supplied EIP-712 payload unless it is a
+    known Accessura auth challenge under the null-contract WorldcupProtocol
+    domain.
+
+    Auth signing and payment signing use the same wallet key. Without this
+    guard a compromised/spoofed backend, a MITM, or a hostile ACCESSURA_BASE_URL
+    could return an EIP-3009 USDC ``TransferWithAuthorization`` (USD Coin token
+    domain) in place of an auth challenge and coax the wallet into signing a real
+    money movement outside ``claims_pay``. Only
+    ``claims_pay(confirm_real_payment=true)`` may authorize a transfer.
+    """
+    if not isinstance(payload, dict):
+        raise RuntimeError("auth challenge payload must be an object")
+    domain = payload.get("domain")
+    if not isinstance(domain, dict):
+        raise RuntimeError("auth challenge payload missing an EIP-712 domain")
+    if domain.get("name") != PROTOCOL_DOMAIN["name"]:
+        raise RuntimeError(
+            "refusing to sign auth challenge: unexpected EIP-712 domain name "
+            f"{domain.get('name')!r} (expected {PROTOCOL_DOMAIN['name']!r})")
+    if str(domain.get("verifyingContract", "")).lower() != PROTOCOL_DOMAIN["verifyingContract"]:
+        raise RuntimeError(
+            "refusing to sign auth challenge: non-null verifyingContract "
+            f"{domain.get('verifyingContract')!r} (possible value-transfer "
+            "authorization disguised as an auth challenge)")
+    primary = payload.get("primaryType")
+    if primary not in AUTH_CHALLENGE_PRIMARY_TYPES:
+        raise RuntimeError(
+            f"refusing to sign auth challenge: primaryType {primary!r} is not an "
+            f"Accessura auth type {sorted(AUTH_CHALLENGE_PRIMARY_TYPES)}")
+
+
+def _sign_auth_challenge(account, payload: dict) -> str:
+    """Validate a backend auth challenge is safe, then EIP-712 sign it."""
+    from eth_account.messages import encode_typed_data
+
+    _assert_safe_auth_challenge(payload)
+    primary = payload["primaryType"]
+    types = {primary: [
+        {"name": f["name"], "type": f["type"]}
+        for f in payload["types"][primary]
+    ]}
+    typed = encode_typed_data(payload["domain"], types, payload["message"])
+    return _sig_hex(account.sign_message(typed).signature)
+
+
+def _mainnet_allowed() -> bool:
+    return os.getenv("ACCESSURA_ALLOW_MAINNET", "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+def _assert_network_allowed(network: str) -> None:
+    """Base mainnet stays closed until the promotion gates pass (plan §4.12)."""
+    if network == BASE_MAINNET_CAIP2 and not _mainnet_allowed():
+        raise RuntimeError(
+            "Base mainnet (eip155:8453) is closed for this release; the active "
+            "target is Base Sepolia (eip155:84532). Set ACCESSURA_ALLOW_MAINNET=1 "
+            "only after the deployment promotion gates pass.")
+
+
+def _max_pay_base_units() -> Optional[int]:
+    """Optional hard ceiling for a single x402 payment, in USDC base units.
+
+    Configured via ACCESSURA_MAX_PAY_USDC (whole USDC, default 100); set it to an
+    empty string to disable. Bounds a preview/confirm swap or a hostile offer so
+    the wallet cannot sign an unbounded transfer.
+    """
+    raw = os.getenv("ACCESSURA_MAX_PAY_USDC", "100").strip()
+    if not raw:
+        return None
+    try:
+        whole = Decimal(raw)
+    except Exception as exc:
+        raise RuntimeError(
+            f"ACCESSURA_MAX_PAY_USDC must be a number or empty, got {raw!r}") from exc
+    return int(whole * 1_000_000)
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -213,11 +301,18 @@ def _sign_bid_authorization(account, encryption_pubkey: str, pack_id: str,
     return authorization
 
 
-def _sign_x402_payment(account, payment_required: dict) -> tuple[dict, str]:
+def _sign_x402_payment(account, payment_required: dict, *,
+                       expected_amount: Optional[str] = None,
+                       expected_pay_to: Optional[str] = None) -> tuple[dict, str]:
     """Build x402 v2 exact EVM payload and PAYMENT-SIGNATURE header.
 
     Base USDC implements EIP-3009 TransferWithAuthorization. The buyer signs
     locally; only the payload is returned to the HTTP layer.
+
+    ``expected_amount`` / ``expected_pay_to`` (when provided by the caller from a
+    prior read-only preview) bind this signature to the previewed terms: the
+    signer refuses if the live offer's amount or recipient changed. A hard
+    ceiling (ACCESSURA_MAX_PAY_USDC) and the mainnet gate apply unconditionally.
     """
     from eth_account.messages import encode_typed_data
 
@@ -245,6 +340,21 @@ def _sign_x402_payment(account, payment_required: dict) -> tuple[dict, str]:
     amount = str(accepted.get("amount", ""))
     if not amount.isdigit() or int(amount) <= 0:
         raise RuntimeError("x402 amount must be a positive integer in USDC base units")
+    _assert_network_allowed(network)
+    pay_to = accepted.get("payTo")
+    if expected_pay_to is not None and str(pay_to).lower() != str(expected_pay_to).lower():
+        raise RuntimeError(
+            "x402 payTo changed since preview; refusing to pay a different "
+            f"recipient (previewed {expected_pay_to}, offered {pay_to})")
+    if expected_amount is not None and str(amount) != str(expected_amount):
+        raise RuntimeError(
+            "x402 amount changed since preview; refusing to pay a different "
+            f"amount (previewed {expected_amount}, offered {amount})")
+    max_units = _max_pay_base_units()
+    if max_units is not None and int(amount) > max_units:
+        raise RuntimeError(
+            f"x402 amount {int(amount)} base units exceeds the ACCESSURA_MAX_PAY_USDC "
+            f"ceiling of {max_units}; raise the limit deliberately to authorize more")
     max_timeout = int(accepted.get("maxTimeoutSeconds", 60))
     if max_timeout <= 0:
         raise RuntimeError("x402 maxTimeoutSeconds must be positive")
@@ -299,6 +409,7 @@ def _payment_readiness(account, network: str = DEFAULT_X402_NETWORK) -> dict:
     profile = X402_CHAIN_PROFILES.get(network)
     if profile is None:
         raise ValueError(f"unsupported payment network: {network}")
+    _assert_network_allowed(network)
     return {
         "signing_ready": True,
         "payment_ready": None,
@@ -372,8 +483,7 @@ class BuyerAgent:
         if (existing.get("identity") or {}).get("signing_key"):
             return True
 
-        domain = {"name": "WorldcupProtocol", "version": "1", "chainId": 8453,
-                  "verifyingContract": "0x0000000000000000000000000000000000000000"}
+        domain = PROTOCOL_DOMAIN
         msg = {"agent_id": self.agent_id, "payment_address": self.agent_id,
                "encryption_pubkey": self._enc_pub}
         typed = encode_typed_data(domain, {
@@ -420,13 +530,7 @@ class BuyerAgent:
         if not ch:
             raise RuntimeError(
                 f"auth challenge failed (did register() succeed?): {r.get('error') or r}")
-        payload = ch["sign_payload"]
-        types = {payload["primaryType"]: [
-            {"name": f["name"], "type": f["type"]}
-            for f in payload["types"][payload["primaryType"]]]}
-        typed = encode_typed_data(
-            payload["domain"], types, payload["message"])
-        sig = _sig_hex(self._account.sign_message(typed).signature)
+        sig = _sign_auth_challenge(self._account, ch["sign_payload"])
         r2 = _request("POST", f"{self.api}/auth/token", {},
                       {"agent_id": self.agent_id,
                        "challenge_id": ch["challenge_id"],
@@ -446,13 +550,7 @@ class BuyerAgent:
         if not ch:
             raise RuntimeError(
                 f"apikey challenge failed: {r.get('error') or r}")
-        payload = ch["sign_payload"]
-        types = {payload["primaryType"]: [
-            {"name": f["name"], "type": f["type"]}
-            for f in payload["types"][payload["primaryType"]]]}
-        typed = encode_typed_data(
-            payload["domain"], types, payload["message"])
-        sig = _sig_hex(self._account.sign_message(typed).signature)
+        sig = _sign_auth_challenge(self._account, ch["sign_payload"])
         out = _request("POST", f"{self.api}/auth/apikey", {},
                        {"agent_id": self.agent_id,
                         "challenge_id": ch["challenge_id"],
@@ -464,6 +562,13 @@ class BuyerAgent:
         self._api_key = api_key
         if out.get("token"):
             self._token = out["token"]
+        elif not self._token:
+            # Cache an immediate Bearer too: /claims is Bearer-only, so an API
+            # key alone leaves claim polling unusable until auth_token runs.
+            try:
+                self.login()
+            except Exception:
+                pass  # api key still valid; claims_list raises an actionable error
         return api_key
 
     # ── discovery ──────────────────────────────────────────────────────
@@ -570,8 +675,13 @@ class BuyerAgent:
             f"{self.api}/transactions/{urllib.parse.quote(claim_id)}/receipt",
             self._auth())
 
-    def pay_claim(self, claim_id: str) -> dict:
-        """Sign x402 locally and pay USDC directly to the claim seller."""
+    def pay_claim(self, claim_id: str, expected_amount: Optional[str] = None,
+                  expected_pay_to: Optional[str] = None) -> dict:
+        """Sign x402 locally and pay USDC directly to the claim seller.
+
+        Pass ``expected_amount`` / ``expected_pay_to`` (read from a prior
+        read-only preview) to bind the signature to the previewed terms.
+        """
         status, _, required = _request_response(
             "GET", f"{self.api}/claims/{urllib.parse.quote(claim_id)}/pay",
             self._auth())
@@ -579,7 +689,9 @@ class BuyerAgent:
             return {**required, "_http_status": status}
         if status != 402:
             return {**required, "_http_status": status}
-        _, payment_header = _sign_x402_payment(self._account, required)
+        _, payment_header = _sign_x402_payment(
+            self._account, required,
+            expected_amount=expected_amount, expected_pay_to=expected_pay_to)
         paid_status, _, paid = _request_response(
             "POST", f"{self.api}/claims/{urllib.parse.quote(claim_id)}/pay",
             {**self._auth(), "PAYMENT-SIGNATURE": payment_header}, {})
@@ -687,8 +799,7 @@ class SellerAgent:
         if (existing.get("identity") or {}).get("signing_key"):
             return True
 
-        domain = {"name": "WorldcupProtocol", "version": "1", "chainId": 8453,
-                  "verifyingContract": "0x0000000000000000000000000000000000000000"}
+        domain = PROTOCOL_DOMAIN
         msg = {"agent_id": self.agent_id,
                "payment_address": self.agent_id,
                "encryption_pubkey": self._enc_pub}
@@ -738,13 +849,7 @@ class SellerAgent:
         if not ch:
             raise RuntimeError(
                 f"apikey challenge failed: {r.get('error') or r}")
-        payload = ch["sign_payload"]
-        types = {payload["primaryType"]: [
-            {"name": f["name"], "type": f["type"]}
-            for f in payload["types"][payload["primaryType"]]]}
-        typed = encode_typed_data(
-            payload["domain"], types, payload["message"])
-        sig = _sig_hex(self._account.sign_message(typed).signature)
+        sig = _sign_auth_challenge(self._account, ch["sign_payload"])
         out = _request("POST", f"{self.api}/auth/apikey", {},
                        {"agent_id": self.agent_id,
                         "challenge_id": ch["challenge_id"],
@@ -756,6 +861,12 @@ class SellerAgent:
         self._api_key = api_key
         if out.get("token"):
             self._token = out["token"]
+        elif not self._token:
+            # Cache an immediate Bearer too: /claims is Bearer-only.
+            try:
+                self.login()
+            except Exception:
+                pass  # api key still valid; list_claims raises an actionable error
         return api_key
 
     def login(self) -> None:
@@ -771,10 +882,7 @@ class SellerAgent:
             raise RuntimeError(
                 f"auth challenge failed (did register() succeed?): "
                 f"{result.get('error') or result}")
-        primary = payload["primaryType"]
-        typed = encode_typed_data(
-            payload["domain"], {primary: payload["types"][primary]}, payload["message"])
-        signature = _sig_hex(self._account.sign_message(typed).signature)
+        signature = _sign_auth_challenge(self._account, payload)
         out = _request(
             "POST", f"{self.api}/auth/token", {},
             {"agent_id": self.agent_id,
@@ -828,11 +936,7 @@ class SellerAgent:
         payload = challenge.get("sign_payload")
         if not payload:
             raise RuntimeError(f"seller payout challenge failed: {challenge_result}")
-        from eth_account.messages import encode_typed_data
-        primary = payload["primaryType"]
-        typed = encode_typed_data(
-            payload["domain"], {primary: payload["types"][primary]}, payload["message"])
-        signature = _sig_hex(self._account.sign_message(typed).signature)
+        signature = _sign_auth_challenge(self._account, payload)
         return _request(
             "POST", f"{self.api}/sellers/payout-wallet/verify", self._auth(),
             {"challenge_id": challenge["challenge_id"], "signature": signature})

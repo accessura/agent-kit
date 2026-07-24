@@ -640,7 +640,8 @@ async def claims_decrypt(
 
 @mcp.tool()
 @safe("claims.pay")
-async def claims_pay(claim_id: str, confirm_real_payment: bool = False) -> str:
+async def claims_pay(claim_id: str, confirm_real_payment: bool = False,
+                     expected_amount: str = "", expected_pay_to: str = "") -> str:
     """Pay a delivery-ready claim directly to the seller with x402 on Base.
 
     This is an explicit real-money action. It signs an EIP-3009 USDC
@@ -651,6 +652,10 @@ async def claims_pay(claim_id: str, confirm_real_payment: bool = False) -> str:
         claim_id: The won claim ID from claims.list
         confirm_real_payment: False previews the live x402 requirement without
             payment; true authorizes the onchain USDC payment
+        expected_amount: When confirming, the base-unit amount you read from the
+            preview. Payment is refused if the live offer's amount differs.
+        expected_pay_to: When confirming, the seller payTo you read from the
+            preview. Payment is refused if the live offer's recipient differs.
     """
     _require_auth()
     if not confirm_real_payment:
@@ -659,13 +664,19 @@ async def claims_pay(claim_id: str, confirm_real_payment: bool = False) -> str:
             "payment_performed": False,
             "confirmation_required": preview.get("_http_status") == 402,
             "next_action": (
-                "verify accepts[0].network, asset, payTo, amount, and timeout; "
-                "only then call claims_pay with confirm_real_payment=true"
+                "verify accepts[0].network, asset, payTo, amount, timeout, and "
+                "the claim<->seller resource binding (resource / accepts[0].resource); "
+                "then call claims_pay with confirm_real_payment=true and pass the "
+                "previewed amount and payTo as expected_amount / expected_pay_to"
             ),
             "payment_preview": preview,
         }, ensure_ascii=False, indent=2)
     cw = _get_client()
-    data = await cw.pay_claim(claim_id)
+    data = await cw.pay_claim(
+        claim_id,
+        expected_amount=expected_amount or None,
+        expected_pay_to=expected_pay_to or None,
+    )
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
