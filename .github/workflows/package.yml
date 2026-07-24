@@ -10,6 +10,7 @@ on:
       - "scripts/smoke_installed_package.py"
       - "scripts/check_catalog_parity.py"
       - "scripts/verify_funded_testnet_evidence.py"
+      - "docs/exact-mcp-tool-manifest-v0.6.json"
       - "catalog_contract.py"
       - "tests/**"
       - ".github/workflows/package.yml"

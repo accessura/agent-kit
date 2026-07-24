@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -11,6 +12,8 @@ import server
 from catalog_contract import (
     CATALOG_VERSION,
     DELIVERY_FORMATS,
+    EXPECTED_MCP_MANIFEST_SHA256,
+    EXPECTED_MCP_TOOLS,
     INFO_TYPES,
     MAX_TOPIC_SLUGS,
     REQUIRED_FIELDS,
@@ -400,10 +403,22 @@ def test_mcp_surface_is_exact_23_tool_contract():
 
 
 def test_mcp_surface_equals_the_shared_exact_manifest():
-    from catalog_contract import EXPECTED_MCP_TOOLS
-
     names = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
     assert names == EXPECTED_MCP_TOOLS
+
+
+def test_checked_in_exact_manifest_and_sha256_match_the_shared_contract():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "exact-mcp-tool-manifest-v0.6.json"
+    )
+    raw = manifest_path.read_bytes()
+    manifest = json.loads(raw)
+
+    assert manifest == sorted(EXPECTED_MCP_TOOLS)
+    assert len(manifest) == len(set(manifest)) == 23
+    assert hashlib.sha256(raw).hexdigest() == EXPECTED_MCP_MANIFEST_SHA256
 
 
 def test_mcp_publish_schema_exposes_contract_bounds_and_enums():
@@ -680,18 +695,24 @@ def _valid_funded_evidence():
         "pre_delivery_payment": {"http_status": 202},
         "delivery_ready_payment": {
             "http_status": 402,
+            "network": "eip155:84532",
+            "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
             "pay_to": seller,
             "amount": "150000",
         },
         "preview": {
             "confirm_real_payment": False,
             "payment_performed": False,
+            "expected_amount": "150000",
+            "expected_pay_to": seller,
             "buyer_usdc_before": "1000000",
             "buyer_usdc_after": "1000000",
             "transfer_count": 0,
         },
         "payment": {
             "confirm_real_payment": True,
+            "expected_amount": "150000",
+            "expected_pay_to": seller,
             "transfers": [{
                 "tx_hash": tx_hash,
                 "from": buyer,
@@ -734,6 +755,44 @@ def test_funded_evidence_verifier_rejects_duplicate_payment():
         verifier.validate_evidence(evidence)
 
 
+def test_funded_runner_cli_cannot_accept_credentials():
+    verifier = load_repo_script("verify_funded_testnet_evidence")
+
+    option_strings = {
+        option
+        for action in verifier.build_parser()._actions
+        for option in action.option_strings
+    }
+    assert option_strings == {"-h", "--help", "--execute", "--validate"}
+    assert not any(
+        token in option.lower()
+        for option in option_strings
+        for token in ("key", "token", "secret", "payout")
+    )
+
+
+def test_funded_runner_refuses_any_mainnet_override(monkeypatch):
+    verifier = load_repo_script("verify_funded_testnet_evidence")
+
+    monkeypatch.setenv("ACCESSURA_ALLOW_MAINNET", "0")
+    with pytest.raises(
+        verifier.ExecutionError,
+        match="ACCESSURA_ALLOW_MAINNET must be absent",
+    ):
+        verifier.FundedConfig()
+
+
+def test_funded_validate_summary_is_release_record_ready():
+    verifier = load_repo_script("verify_funded_testnet_evidence")
+
+    summary = verifier._validated_summary(_valid_funded_evidence())
+    assert summary["verified"] is True
+    assert summary["funded_testnet_tx"] == "0x" + "ab" * 32
+    assert summary["funded_testnet_amount_base_units"] == "150000"
+    assert all(summary["assertion_results"].values())
+    assert summary["real_payment_performed_by_this_script"] is False
+
+
 def test_ci_paths_cover_expanded_skill_and_funded_gates():
     from pathlib import Path
 
@@ -747,6 +806,7 @@ def test_ci_paths_cover_expanded_skill_and_funded_gates():
     assert '"accessura_sdk/pyproject.toml"' in skill_workflow
     assert '"examples/**"' in skill_workflow
     assert '"scripts/verify_funded_testnet_evidence.py"' in package_workflow
+    assert '"docs/exact-mcp-tool-manifest-v0.6.json"' in package_workflow
 
 
 def test_sdk_publish_rejects_unknown_info_type_before_network(monkeypatch):

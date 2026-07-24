@@ -34,6 +34,9 @@ EXPECTED_MCP_TOOLS = frozenset({
     "topics_list",
     "topics_packs",
 })
+EXPECTED_MCP_MANIFEST_SHA256 = (
+    "d255dc3fa73aaec01d8d969a83b67fcc14d2aa6408f5fb661c0fe9a2854af00f"
+)
 DELIVERY_FORMATS = {"structured": "json", "text": "markdown", "figure": "image", "video": "video", "audio": "audio"}
 MIN_TOPIC_SLUGS = 1
 MAX_TOPIC_SLUGS = 20
