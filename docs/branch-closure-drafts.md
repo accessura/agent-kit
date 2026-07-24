@@ -85,6 +85,28 @@ Use `v0.6.0` only if funded Testnet and review both pass; otherwise use
 
 ## web-demo-design PR #306 update
 
+### Required document disposition before merge
+
+Do not merge the current 314-line
+`docs/architecture/agent-kit-contract-sync-plan.md` as an `active` plan. It
+still treats the archive origin, 24 tools, PR #8, and the old release order as
+current. Before making #306 ready:
+
+1. change its `docs/CATALOG.md` entry from `active` to `superseded`;
+2. replace the old plan body with a short historical pointer that names
+   `agent-kit-v0-6-release-consolidation-plan.md` as the current execution
+   authority;
+3. preserve only the still-valid 1–20 Topic guardrail, no-bulk-migration
+   rationale, and completed selective-republish history;
+4. point current implementation/release facts to Agent Kit #18, product #364,
+   and `[FINAL_TAG]`;
+5. remove active claims for the old host, 24 tools, `#11 → #8`, and a stable
+   tag until those facts are actually true.
+
+If #306 is no longer useful after this compaction, close it as superseded by
+#364 instead of merging a second active release plan. Do not merge its current
+unmodified body.
+
 ### Replacement status section
 
 > ## Current state
