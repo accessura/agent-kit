@@ -161,7 +161,11 @@ class RpcClient:
         request = urllib.request.Request(
             self.url,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "Accessura-Agent-Kit-Funded-Evidence/0.6",
+            },
             method="POST",
         )
         try:
@@ -726,9 +730,13 @@ def execute_funded_lifecycle(config: FundedConfig) -> dict[str, Any]:
         content_text=plaintext.decode("utf-8"),
         source="seller-local",
         observed_at=datetime.now(timezone.utc).isoformat(),
-        payload={"run_id": run_id, "status": "ready"},
         encrypt_with_managed=True,
     )
+    if signal_response.get("error"):
+        raise ExecutionError(
+            f"fresh Signal append failed before bidding: "
+            f"{signal_response['error']}"
+        )
     signal_id = _extract_id(
         signal_response,
         ("_local_signal_id", "signal_id", "signalId", "id"),

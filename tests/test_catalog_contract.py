@@ -794,6 +794,39 @@ def test_funded_runner_refuses_any_mainnet_override(monkeypatch):
         verifier.FundedConfig()
 
 
+def test_funded_rpc_client_sets_public_json_headers(monkeypatch):
+    verifier = load_repo_script("verify_funded_testnet_evidence")
+    observed = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "result": "0x14a34"}
+            ).encode()
+
+    def fake_urlopen(request, timeout):
+        observed["headers"] = dict(request.header_items())
+        observed["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(verifier.urllib.request, "urlopen", fake_urlopen)
+    rpc = verifier.RpcClient("https://rpc.invalid.example")
+
+    assert rpc.call("eth_chainId", []) == "0x14a34"
+    assert observed["headers"]["Accept"] == "application/json"
+    assert observed["headers"]["Content-type"] == "application/json"
+    assert observed["headers"]["User-agent"].startswith(
+        "Accessura-Agent-Kit-Funded-Evidence/"
+    )
+    assert observed["timeout"] == 30
+
+
 def test_funded_validate_summary_is_release_record_ready():
     verifier = load_repo_script("verify_funded_testnet_evidence")
 
