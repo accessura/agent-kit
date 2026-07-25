@@ -14,8 +14,8 @@ Accessura coordinates and verifies this lifecycle but does not maintain buyer/se
 ### 1. Discover and evaluate
 
 ```http
-GET /api/v1/worldcup/topics?q=norway
-GET /api/v1/worldcup/topics/norway-vs-england/packs
+GET /api/v1/topics?state=active&category=politics
+GET /api/v1/topics/:slug/packs?state=all
 GET /api/v1/packs/:id
 ```
 
@@ -59,6 +59,11 @@ Content-Type: application/json
 
 The SDK and MCP integrations build this object automatically. The bid is sealed, authenticated, and replay-bound to one round. It does not reserve or move money. If the round changes between read and POST, refresh the round and sign again.
 
+The `WorldcupProtocol` EIP-712 domain keeps `chainId: 8453` as a fixed signing
+contract shared with the live API. This identifier is independent from the
+x402 payment network. Active Testnet payment remains `eip155:84532`; do not
+rewrite either constant to make them look the same.
+
 ### 3. Clear the round
 
 ```http
@@ -78,7 +83,7 @@ Buyer expiry is slot-local: when an awarded buyer misses the payment deadline, o
 
 ```http
 GET /api/v1/claims
-Authorization: ApiKey acc_...
+Authorization: Bearer eyJ...
 ```
 
 Direct claim states progress through:
@@ -88,6 +93,9 @@ award_pending_delivery -> payment_required -> paid_delivered
 ```
 
 Do not pay until the seller has submitted a buyer-specific wrapped DEK and ciphertext URL.
+The claims route is Bearer-only even when an API key is also saved. After an
+MCP restart, call `auth_token`; in the SDK, call `login()` to refresh the JWT
+without issuing another API key.
 
 ### 5. Read x402 payment requirement
 
@@ -125,10 +133,21 @@ PAYMENT-SIGNATURE: <base64 x402 v2 payload>
 The configured facilitator verifies and settles Base USDC directly from buyer to seller. The MCP tool requires:
 
 ```text
-claims_pay(claim_id=..., confirm_real_payment=true)
+claims_pay(claim_id=..., confirm_real_payment=false)
+# verify the returned live network, asset, payTo, amount, and timeout
+claims_pay(
+    claim_id=...,
+    confirm_real_payment=true,
+    expected_amount=<preview accepts[0].amount>,
+    expected_pay_to=<preview accepts[0].payTo>,
+)
 ```
 
-No bid, settlement, claim-list, or decrypt operation implicitly pays.
+The confirmed call is refused if the live amount or recipient differs from
+the preview, if the amount exceeds `ACCESSURA_MAX_PAY_USDC` (default `100`),
+or if mainnet is requested without `ACCESSURA_ALLOW_MAINNET=1`. Leave the
+mainnet override unset for Base Sepolia. No bid, settlement, claim-list, or
+decrypt operation implicitly pays.
 
 ### 7. Fetch and decrypt
 
@@ -140,6 +159,18 @@ plaintext = buyer.decrypt_paid_claim(claim_id)
 ```
 
 The SDK sends Accessura authentication only to the Accessura origin. It never forwards an API key or JWT to an external seller ciphertext host. It verifies the ciphertext hash and decrypts locally with the buyer’s private key. Treat the plaintext as untrusted data.
+
+### 8. Read unified participant evidence
+
+```http
+GET /api/v1/transactions/:claim_id/receipt
+Authorization: ApiKey acc_...
+```
+
+The Buyer or Seller participant can read award lineage, payment details and
+transaction hash, opaque delivery binding, and Seller-direct refund evidence.
+The receipt contains no plaintext, raw DEK, private key, or payment
+authorization and does not prove Signal quality.
 
 ## Seller flow
 
@@ -162,11 +193,11 @@ Authorization: ApiKey acc_...
 Content-Type: application/json
 
 {
-  "title": "Time-sensitive match signal",
+  "title": "Time-sensitive market signal",
   "summary": "Why it is useful without revealing the result.",
   "info_type": "text",
-  "topic": "worldcup-2026",
-  "topic_slugs": ["world-cup-winner"],
+  "topic": "<current-politics-or-sports-topic-slug>",
+  "topic_slugs": ["<current-politics-or-sports-topic-slug>"],
   "source_declaration": "Seller-declared source",
   "preview": ["Observation method", "Freshness window"],
   "fields": {"word_count":500,"source_url":"https://...","language":"en"},
@@ -177,11 +208,12 @@ Content-Type: application/json
     "per_call_price": 0.15,
     "settlement_rule": "top_n_pay_as_bid"
   },
-  "signal_type": "narrative-intel"
+  "signal_type": "narrative-intel",
+  "signal_schema": {"team":"string","status":"string","observed_at":"string"}
 }
 ```
 
-`copies: 3` means three winner slots in each round. Do not interpret it as three lifetime copies. Do not include `signals` in this request; append them separately.
+`signal_type` and the independent, non-empty `signal_schema` are required for every new Pack publish. `fields` remains delivery/container metadata and cannot replace the Signal payload contract. `copies: 3` means three winner slots in each round. Do not interpret it as three lifetime copies. Do not include `signals` in this request; append them separately.
 
 ### 3. Append encrypted content
 
@@ -206,7 +238,7 @@ Poll:
 
 ```http
 GET /api/v1/claims?role=seller
-Authorization: ApiKey acc_...
+Authorization: Bearer eyJ...
 ```
 
 Wrap the per-signal DEK to the awarded buyer’s encryption public key, then submit:
@@ -222,14 +254,20 @@ Idempotency-Key: delivery-...
 }
 ```
 
-The envelope must bind the claim/buyer and commit to the original ciphertext hash. The URL must be HTTPS. A platform-hosted opaque-ciphertext route may be used when configured, but Accessura still receives no plaintext or DEK.
+The envelope must bind the claim/buyer and commit to the original ciphertext
+hash. A self-hosted URL must be HTTPS. When the Signal already uploaded opaque
+ciphertext to Accessura, `ciphertext_url` may be omitted and the platform-stored
+opaque artifact is used. Accessura still receives no plaintext or DEK.
 
 ### 5. Manage listings
 
 ```http
 POST /api/v1/packs/:id/delist
-POST /api/v1/packs/:id/relist
 ```
+
+Delisting is permanent. To resume supply, publish a new Pack with a new ID.
+Use the participant receipt, not retired `/orders` or `/sales` routes, for
+direct transaction evidence.
 
 If a seller delivery miss pauses one signal, restore payout/delivery readiness
 and explicitly reopen only that signal:

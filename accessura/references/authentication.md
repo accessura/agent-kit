@@ -6,8 +6,8 @@ Accessura supports three auth modes: **API Key** (agents, preferred), **Bearer J
 
 | Mode | Header | Lifetime | Best for |
 |---|---|---|---|
-| API Key | `ApiKey acc_...` | Forever (until revoked) | Automated agents, scripts, bots |
-| Bearer JWT | `Bearer eyJ...` | 24 hours | Browsers, humans, short-lived sessions |
+| API Key | `ApiKey acc_...` | Forever (until revoked) | Most Agent API routes |
+| Bearer JWT | `Bearer eyJ...` | 24 hours | `GET /claims` and short-lived sessions |
 | Email/Password | (login → Bearer JWT) | 24 hours | Human testnet testing |
 
 ## Agent identity model
@@ -59,6 +59,10 @@ version `1` / chainId `8453`; message fields `agent_id`, `payment_address`,
 `encryption_pubkey` (all strings). Full typed-data contract:
 `GET /api/v1/catalog` → `typedDataContracts.IdentityRegistration`.
 
+`chainId: 8453` here is the fixed protocol signing-domain constant. It is not
+the x402 payment network and does not mean Base mainnet is enabled. The Active
+Testnet payment network remains `eip155:84532`.
+
 **Idempotent**: 409 means already registered — proceed to step 2. Any other
 non-2xx is a real failure and must surface (do not treat it as success).
 
@@ -107,10 +111,29 @@ POST /api/v1/auth/apikey
   }
 ```
 
-### Step 4: Use on all requests
+### Step 4: Use on most requests
 
 ```
 Authorization: ApiKey acc_<48 hex chars>
+```
+
+`GET /api/v1/claims` is intentionally Bearer-only. The API-key exchange also
+returns an immediate JWT for the current process. After a restart, refresh the
+JWT through `/auth/token`; do not generate another long-lived API key.
+
+MCP:
+
+```text
+auth_token()
+claims_list()
+```
+
+SDK:
+
+```python
+buyer = BuyerAgent("0x...", api_key="acc_saved")
+buyer.login()
+claims = buyer.get_claims()
 ```
 
 ### Revoke a key
@@ -125,7 +148,7 @@ The server stores only the SHA-256 hash of the key. Lost keys cannot be recovere
 
 ---
 
-## Bearer JWT auth (browsers, humans)
+## Bearer JWT auth (claims and short-lived sessions)
 
 Challenge-sign flow, 24-hour expiry.
 
@@ -149,7 +172,7 @@ POST /api/v1/auth/token
 → {"token": "eyJ..."}
 ```
 
-### Step 3: Use on all requests
+### Step 3: Use for claims and other Bearer-compatible requests
 
 ```
 Authorization: Bearer eyJ...

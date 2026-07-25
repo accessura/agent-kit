@@ -8,7 +8,12 @@ Flow: register -> get API key -> search -> signed bid -> settle -> list claims.
 
 After a seller prepares a claim, payment is an explicit separate action:
     status = agent.get_payment(claim_id)
-    delivery = agent.pay_claim(claim_id)       # Base USDC -> seller
+    offer = status["accepts"][0]
+    delivery = agent.pay_claim(
+        claim_id,
+        expected_amount=str(offer["amount"]),
+        expected_pay_to=offer["payTo"],
+    )                                         # Base USDC -> seller
     plaintext = agent.decrypt_paid_claim(claim_id)
 
 Bid and settlement do not reserve or move funds. Real Base USDC payment is
@@ -47,7 +52,7 @@ def main():
     # 3. Browse topics
     print("\n── 3. Topics ──")
     try:
-        topics = agent.list_topics(limit=5)
+        topics = agent.list_topics(state="active")
         for t in topics.get("topics", [])[:3]:
             print(f"   {t['slug']} | vol={t.get('volume', 0):,.0f}")
     except Exception as e:
@@ -55,7 +60,7 @@ def main():
 
     # 4. Search for packs
     print("\n── 4. Search ──")
-    packs = agent.search("Norway", limit=5)
+    packs = agent.search("election", limit=5)
     print(f"   Found {len(packs)} packs")
     for p in packs[:3]:
         print(f"   [{p.get('infoType')}] {p['title'][:70]}")
@@ -86,7 +91,7 @@ def main():
     # 6. Settle (still no payment)
     print("\n── 6. Settle ──")
     try:
-        result = agent.settle(target["id"])
+        result = agent.settle(target["id"], target_signal["id"])
         print(f"   Settle: {json.dumps(result, indent=2)[:300]}")
     except Exception as e:
         print(f"   Settle: {e}")
@@ -106,10 +111,17 @@ def main():
                 if os.getenv("ACCESSURA_ALLOW_PAYMENT") != "1":
                     print("   [payment skipped] review payee/amount, then set ACCESSURA_ALLOW_PAYMENT=1")
                 else:
-                    delivery = agent.pay_claim(claim_id)
+                    offer = payment["accepts"][0]
+                    delivery = agent.pay_claim(
+                        claim_id,
+                        expected_amount=str(offer["amount"]),
+                        expected_pay_to=offer["payTo"],
+                    )
                     print(f"   Paid: {delivery.get('payment_tx_hash', delivery)}")
                     plaintext = agent.decrypt_paid_claim(claim_id)
                     print(f"   Decrypted {len(plaintext)} bytes of UNTRUSTED seller content")
+                    receipt = agent.get_transaction_receipt(claim_id)
+                    print(f"   Receipt: {json.dumps(receipt, indent=2)[:300]}")
     except Exception as e:
         print(f"   Claims: {e}")
 
