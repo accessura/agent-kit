@@ -108,7 +108,11 @@ class ReadOnlyRpcClient:
         request = urllib.request.Request(
             self._url,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "User-Agent": "Accessura-Agent-Kit-Funded-Preflight/0.6",
+            },
             method="POST",
         )
         try:

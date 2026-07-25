@@ -1,10 +1,10 @@
 # Agent Kit v0.6 Release Evidence
 
-Status: `rc_only`. Phase 4–7 evidence is prepared, but funded Base Sepolia and
-the required security review are not complete. No merge or tag is authorized
-by this record.
+Status: `rc_only`. The first authorized funded Base Sepolia attempt failed
+before any payment, and the required security review is not complete. No merge
+or tag is authorized by this record.
 
-Verified at: `2026-07-24T23:01:00Z`
+Verified at: `2026-07-25T00:02:55Z`
 
 ## Immutable inputs and candidate identity
 
@@ -56,7 +56,7 @@ exactly 23 names, and compare the digest to
 
 ```text
 python_versions: [3.10.20, 3.12.13]
-unit_contract_result: passed; Agent Kit 84/84 on each Python; product source 53/53 on each Python
+unit_contract_result: passed; Agent Kit 94/94 on each Python; product source 53/53 on each Python
 crypto_result: passed; 6/6 executable decrypt/ECIES checks on each Python in both repositories
 skill_validation_result: passed; scripts/validate_skill_bundle.py on Python 3.10 and 3.12
 wheel_sdist_result: passed; accessura_agent_kit-0.6.0 wheel and sdist built on Python 3.10 and 3.12
@@ -146,6 +146,18 @@ mergeable: true
 review_decision: pending
 ```
 
+Agent Kit PR #18 after the funded-preflight helper, at
+`72f9612be847f9f96e7952b8effe0029dac3186e`:
+
+```text
+clean-install (3.10): success
+clean-install (3.12): success
+validate: success
+draft: true
+mergeable: true
+review_decision: pending
+```
+
 Product PR #364 at
 `8f2b0e47ce5d20cdf6d2af3b91df9d2b46c6cab3`:
 
@@ -166,9 +178,14 @@ commit that records this result changes only this Markdown evidence file.
 ## Funded and review gates
 
 ```text
-funded_testnet_result: not_authorized
-funded_testnet_tx:
-funded_testnet_amount_base_units:
+funded_testnet_result: failed_pre_payment
+funded_testnet_attempted_at: 2026-07-25T00:01:57Z
+funded_testnet_tx: none
+funded_testnet_amount_base_units: 0
+funded_testnet_buyer_usdc_before_base_units: 5899999
+funded_testnet_buyer_usdc_after_base_units: 5899999
+funded_testnet_failure_stage: seller_payout_bind
+funded_testnet_failure: payout auth challenge domain AccessuraSellerPayout was rejected; expected WorldcupProtocol
 reviewers: []
 factnn_review: pending
 jc_testnet_waiver: none
@@ -179,9 +196,21 @@ The funded runner and runbook are prepared at:
 - `scripts/verify_funded_testnet_evidence.py`;
 - `docs/funded-base-sepolia-validation.md`.
 
-The focused no-money verifier/CLI tests pass. The funded `--execute` mode was
-not invoked, no key was loaded, no live identity/Pack/Signal/bid/settlement/key
-release was written, and no USDC transfer occurred.
+The focused no-money verifier/CLI/helper tests pass. JC authorized one funded
+`--execute` attempt using the Tier-1 document's funded Agent Buyer and Agent
+Seller identities. Local preflight passed on Base Sepolia chain `84532`, the
+fixed Circle USDC contract, identity/payout control, dedicated delivery-secret
+separation, a `0.02` USDC signing ceiling, and Buyer balance sufficiency.
+
+Execution stopped during `seller.bind_payout_wallet`, before Pack/Signal
+publication, bid, settlement, delivery, or `claims_pay`: the returned payout
+challenge used EIP-712 domain `AccessuraSellerPayout`, while the merged signing
+guard expected `WorldcupProtocol`. The guard was not bypassed or changed.
+Buyer USDC was read again after the failure and remained exactly `5899999`
+base units, proving no payment occurred. The private sanitized failure record
+is stored outside the repository at
+`/Users/jc/Desktop/accessura-funded-base-sepolia-evidence-2026-07-24.json`
+with mode `0600`.
 
 Security review routing is in `docs/security-review-checklist.md`. Stable
 requires either FactNN approval or JC's explicit one-time Base-Sepolia-only
@@ -205,8 +234,10 @@ docs/release-evidence-v0.6.md
 docs/security-review-checklist.md
 examples/example_buyer.py
 scripts/validate_skill_bundle.py
+scripts/prepare_funded_testnet_env.py
 scripts/verify_funded_testnet_evidence.py
 tests/test_catalog_contract.py
+tests/test_prepare_funded_env.py
 ```
 
 Forbidden security implementation files were not modified by the Phase 4–7

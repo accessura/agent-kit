@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import json
 import stat
 from pathlib import Path
 
@@ -192,6 +193,38 @@ def test_helper_cli_has_no_credential_arguments():
         for option in option_strings
         for token in ("key", "token", "secret", "payout")
     )
+
+
+def test_rpc_client_sets_public_json_headers(monkeypatch):
+    observed = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"jsonrpc": "2.0", "id": 1, "result": "0x14a34"}
+            ).encode()
+
+    def fake_urlopen(request, timeout):
+        observed["headers"] = dict(request.header_items())
+        observed["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(HELPER.urllib.request, "urlopen", fake_urlopen)
+    rpc = HELPER.ReadOnlyRpcClient("https://rpc.invalid.example")
+
+    assert rpc.call("eth_chainId", []) == "0x14a34"
+    assert observed["headers"]["Accept"] == "application/json"
+    assert observed["headers"]["Content-type"] == "application/json"
+    assert observed["headers"]["User-agent"].startswith(
+        "Accessura-Agent-Kit-Funded-Preflight/"
+    )
+    assert observed["timeout"] == 20
 
 
 def test_write_env_copies_only_existing_allowlist_values_with_mode_0600(tmp_path):
