@@ -1,10 +1,10 @@
 # Agent Kit v0.6 Release Evidence
 
-Status: `rc_only`. The first authorized funded Base Sepolia attempt failed
-before any payment, and the required security review is not complete. No merge
-or tag is authorized by this record.
+Status: `rc_only`. The funded Base Sepolia lifecycle passed all nine release
+assertions, but the required security review is not complete. No merge or tag
+is authorized by this record.
 
-Verified at: `2026-07-25T00:02:55Z`
+Verified at: `2026-07-25T00:48:45Z`
 
 ## Immutable inputs and candidate identity
 
@@ -12,25 +12,26 @@ Verified at: `2026-07-25T00:02:55Z`
 agent_kit_base_sha: 5bda81c3d61c5a53daab08af7789cdd44e023719
 consolidation_pr: https://github.com/accessura/agent-kit/pull/18
 security_head_sha: d1eae9b41c25bed41980cda25b38a782a25d731f
-candidate_sha: 441f0eb86ef6886ae476b1c5be5e4eee32150770
-candidate_sha_scope: Phase 4-7 functional code/docs tree before this evidence-only record update
-local_gate_tree: 441f0eb86ef6886ae476b1c5be5e4eee32150770
-previous_evidence_head_sha: 0b30bb6c8f8a85532c4ba88c7cc15948597d2bb7
-green_candidate_pr_head_sha: 441f0eb86ef6886ae476b1c5be5e4eee32150770
+candidate_sha: e8371f9a79330c80ba8441fa5d4ff5c4f24472f7
+candidate_sha_scope: funded runner RPC/fail-fast code before this evidence-only record update
+local_gate_tree: e8371f9a79330c80ba8441fa5d4ff5c4f24472f7
+previous_evidence_head_sha: 63448ce4048fa6c1cce625a8cfabf2276901b17f
+green_candidate_pr_head_sha: e8371f9a79330c80ba8441fa5d4ff5c4f24472f7
 merge_sha: pending_jc
 tag: pending_jc; currently eligible at most for v0.6.0-rc.1
 tag_sha: pending_jc
 
 web_demo_base_sha: 343b29230e41bfa2e7fef55b2d3466cea37dae0c
-web_demo_candidate_sha: 8f2b0e47ce5d20cdf6d2af3b91df9d2b46c6cab3
-web_demo_runtime_sha: 343b29230e41bfa2e7fef55b2d3466cea37dae0c
-active_testnet_release_sha: a8db176f8c240b64f9b3af33882a8d002e7fc7a3
+web_demo_candidate_sha: cd606d6852c1290fe211c4d048f49df455c59423
+web_demo_runtime_sha: cd606d6852c1290fe211c4d048f49df455c59423
+active_testnet_release_sha: cd606d6852c1290fe211c4d048f49df455c59423
 catalog_version: 2026-07-17.pack-signal-read-contract
 ```
 
-`web_demo_runtime_sha` remains the current integration base because product PR
-#364 has not been merged. The candidate SHA is recorded separately and is not
-misstated as a deployed runtime.
+Product PR #364 remains Draft and unmerged. JC's payout-drift task explicitly
+required the fixed backend to be exercised on the Active Testnet, so the exact
+Draft candidate is recorded separately as the deployed Testnet runtime; it is
+not misstated as an integration-branch merge.
 
 ## Version and exact MCP contract
 
@@ -56,7 +57,7 @@ exactly 23 names, and compare the digest to
 
 ```text
 python_versions: [3.10.20, 3.12.13]
-unit_contract_result: passed; Agent Kit 94/94 on each Python; product source 53/53 on each Python
+unit_contract_result: passed; Agent Kit 95/95 on each Python; product source 53/53 on each Python
 crypto_result: passed; 6/6 executable decrypt/ECIES checks on each Python in both repositories
 skill_validation_result: passed; scripts/validate_skill_bundle.py on Python 3.10 and 3.12
 wheel_sdist_result: passed; accessura_agent_kit-0.6.0 wheel and sdist built on Python 3.10 and 3.12
@@ -66,6 +67,7 @@ exact_manifest_result: passed; exact 23 names, no duplicates, fingerprint matche
 live_read_only_parity_result: passed; live catalog 2026-07-17.pack-signal-read-contract; payment_performed=false
 product_source_compile_result: passed; compileall on Python 3.10 and 3.12
 product_source_tool_parity_result: passed; same exact 23 names as checked-in Agent Kit manifest
+product_runtime_gate_result: passed; payout challenge 34/34, canonical pre-deploy matrix, TypeScript, catalog drift lint, and production build
 git_diff_check_result: passed in both repositories
 ```
 
@@ -147,7 +149,7 @@ review_decision: pending
 ```
 
 Agent Kit PR #18 after the funded-preflight helper, at
-`72f9612be847f9f96e7952b8effe0029dac3186e`:
+`63448ce4048fa6c1cce625a8cfabf2276901b17f`:
 
 ```text
 clean-install (3.10): success
@@ -158,8 +160,20 @@ mergeable: true
 review_decision: pending
 ```
 
-Product PR #364 at
-`8f2b0e47ce5d20cdf6d2af3b91df9d2b46c6cab3`:
+Agent Kit PR #18 after the funded runner RPC and fail-fast fixes, at
+`e8371f9a79330c80ba8441fa5d4ff5c4f24472f7`:
+
+```text
+clean-install (3.10): success
+clean-install (3.12): success
+validate: success
+draft: true
+mergeable: true
+review_decision: pending
+```
+
+Product PR #364 after the Seller payout typed-data anti-drift fix, at
+`cd606d6852c1290fe211c4d048f49df455c59423`:
 
 ```text
 ownership-review: success
@@ -171,21 +185,20 @@ review_decision: pending
 ```
 
 These CI results are bound to the listed heads. Candidate
-`441f0eb86ef6886ae476b1c5be5e4eee32150770` received fresh successful
+`e8371f9a79330c80ba8441fa5d4ff5c4f24472f7` received fresh successful
 `clean-install (3.10)`, `clean-install (3.12)`, and `validate` checks. The
 commit that records this result changes only this Markdown evidence file.
 
 ## Funded and review gates
 
 ```text
-funded_testnet_result: failed_pre_payment
-funded_testnet_attempted_at: 2026-07-25T00:01:57Z
-funded_testnet_tx: none
-funded_testnet_amount_base_units: 0
+funded_testnet_result: passed
+funded_testnet_verified_at: 2026-07-25T00:47:21.689379Z
+funded_testnet_tx: 0xd8f66bbe5829a122a6cef10ecd6dcb1170a9ed2df47ae5401c16662fe68bfb3a
+funded_testnet_amount_base_units: 10000
 funded_testnet_buyer_usdc_before_base_units: 5899999
-funded_testnet_buyer_usdc_after_base_units: 5899999
-funded_testnet_failure_stage: seller_payout_bind
-funded_testnet_failure: payout auth challenge domain AccessuraSellerPayout was rejected; expected WorldcupProtocol
+funded_testnet_buyer_usdc_after_base_units: 5889999
+funded_testnet_assertions: 9/9 passed
 reviewers: []
 factnn_review: pending
 jc_testnet_waiver: none
@@ -196,21 +209,35 @@ The funded runner and runbook are prepared at:
 - `scripts/verify_funded_testnet_evidence.py`;
 - `docs/funded-base-sepolia-validation.md`.
 
-The focused no-money verifier/CLI/helper tests pass. JC authorized one funded
-`--execute` attempt using the Tier-1 document's funded Agent Buyer and Agent
-Seller identities. Local preflight passed on Base Sepolia chain `84532`, the
-fixed Circle USDC contract, identity/payout control, dedicated delivery-secret
+The focused no-money verifier/CLI/helper tests pass. JC authorized the funded
+run using the Tier-1 document's existing funded Agent Buyer and Agent Seller
+identities. Local preflight passed on Base Sepolia chain `84532`, the fixed
+Circle USDC contract, identity/payout control, dedicated delivery-secret
 separation, a `0.02` USDC signing ceiling, and Buyer balance sufficiency.
 
-Execution stopped during `seller.bind_payout_wallet`, before Pack/Signal
-publication, bid, settlement, delivery, or `claims_pay`: the returned payout
-challenge used EIP-712 domain `AccessuraSellerPayout`, while the merged signing
-guard expected `WorldcupProtocol`. The guard was not bypassed or changed.
-Buyer USDC was read again after the failure and remained exactly `5899999`
-base units, proving no payment occurred. The private sanitized failure record
-is stored outside the repository at
-`/Users/jc/Desktop/accessura-funded-base-sepolia-evidence-2026-07-24.json`
-with mode `0600`.
+The deployed backend payout challenge now reports
+`SellerPayoutBinding` under `WorldcupProtocol` with the null verifying
+contract, so the unchanged SDK guard accepted the binding. The successful
+lifecycle proved all nine assertions: bid and unpaid award moved no funds,
+delivery readiness preceded 402, false preview did not pay, true confirmation
+used both expected bindings and created exactly one 10,000-base-unit
+Buyer-to-Seller USDC transfer, no platform recipient appeared, the Buyer
+decrypted locally, retry created no second transfer, and the participant
+receipt matched the on-chain transaction.
+
+Two harness failures were audited before the successful execution: the first
+stopped at a read-only RPC 403 before bidding, and the second stopped before
+bid submission when a non-empty Signal payload was rejected by the direct
+plaintext policy. In both cases the Active Testnet database had zero Buyer
+settlement intents and payment attempts, and the chain audit showed unchanged
+Buyer balance and zero outgoing USDC transfers. The runner now sends public
+JSON RPC headers, omits the forbidden Signal payload, and fails fast on Signal
+append errors.
+
+The private sanitized passing record is stored outside the repository at
+`/Users/jc/Desktop/accessura-funded-base-sepolia-evidence-2026-07-25.json`
+with mode `0600`. The two pre-payment failure records are retained beside it
+for audit and also have mode `0600`.
 
 Security review routing is in `docs/security-review-checklist.md`. Stable
 requires either FactNN approval or JC's explicit one-time Base-Sepolia-only
