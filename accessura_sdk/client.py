@@ -990,6 +990,41 @@ class SellerAgent:
             f"{urllib.parse.quote(signal_id)}/settlement-readiness",
             self._auth(), {})
 
+    def get_readiness(self) -> dict:
+        """Read Seller-owned payout and delivery readiness state."""
+        return _request(
+            "GET",
+            f"{self.api}/sellers/readiness",
+            self._bearer_auth())
+
+    def update_readiness(
+        self,
+        status: str = "",
+        sla_seconds: Optional[int] = None,
+    ) -> dict:
+        """Pause/resume Seller delivery or update its listing-visible SLA."""
+        normalized_status = status.strip().lower()
+        if normalized_status and normalized_status not in {"active", "paused"}:
+            raise ValueError("status must be active or paused")
+        if sla_seconds is not None and (
+            isinstance(sla_seconds, bool)
+            or not isinstance(sla_seconds, int)
+            or not 30 <= sla_seconds <= 86_400
+        ):
+            raise ValueError("sla_seconds must be an integer from 30 to 86400")
+        if not normalized_status and sla_seconds is None:
+            raise ValueError("status or sla_seconds required")
+        body: dict[str, Any] = {}
+        if normalized_status:
+            body["status"] = normalized_status
+        if sla_seconds is not None:
+            body["sla_seconds"] = sla_seconds
+        return _request(
+            "POST",
+            f"{self.api}/sellers/readiness",
+            self._bearer_auth(),
+            body)
+
     # ── signals ───────────────────────────────────────────────────────
 
     def append_signal(self, pack_id: str, label: str, summary: str,

@@ -56,34 +56,33 @@ again. To uninstall, remove only `~/.codex/skills/accessura` or
 
 ## MCP server
 
-The FastMCP server exposes an exact 23-tool surface, including `auth_token`,
+The FastMCP server exposes an exact 25-tool surface, including `auth_token`,
 `payments_readiness`, `bids_place`, `claims_settle`, `claims_pay`,
 `claims_receipt`, `claims_decrypt`, `claims_deliver`, `seller_payout_bind`, and
+`seller_readiness_get`, `seller_readiness_update`, and
 `seller_signal_reopen`.
 
 ```bash
-python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.6.0"
+python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.6.1"
 claude mcp add accessura -- accessura-mcp
 ```
 
-`v0.6.0` is the planned stable release tag and must not be treated as available
-until that immutable public tag exists and its clean-install gate passes. The
-version tag makes the installation reproducible and installs both the
+`v0.6.1` adds Seller delivery-readiness inspection and pause/resume/SLA
+operations to the SDK and MCP surface. The install reference becomes available
+only after the reviewed release is tagged; this development PR does not create
+or move a tag. The immutable version tag makes the installation reproducible and installs both the
 `accessura_sdk` Python package and the `accessura-mcp` console command. To
-upgrade, replace `v0.6.0` with a newer published tag and add `--upgrade` to the
+upgrade, replace `v0.6.1` with a newer published tag and add `--upgrade` to the
 same `pip install` command. To uninstall, run
 `python -m pip uninstall accessura-agent-kit`.
 
-One isolated funded Base Sepolia lifecycle remains a stable-release gate, but
-it is not authorized and has not run. JC must provide the environment-only
-Buyer/Seller inputs and explicitly authorize execution; no `v0.6.0` tag may be
-created until all nine checks in
-[the funded validation runbook](docs/funded-base-sepolia-validation.md) pass.
-For local preparation, `python scripts/prepare_funded_testnet_env.py --check`
-validates JC's existing wallets without creating one: the execute runner
-automatically registers both identities and binds the Seller payout (no
-pre-registration or pre-bind is required), and it accepts only Circle's Base
-Sepolia USDC contract `0x036CbD53842c5426634e7929541eC2318f3dCF7e`.
+The funded Base Sepolia procedure remains documented in
+[the validation runbook](docs/funded-base-sepolia-validation.md). For local
+preparation, `python scripts/prepare_funded_testnet_env.py --check` validates
+existing wallets without creating one: the execute runner automatically
+registers both identities and binds the Seller payout, and it accepts only
+Circle's Base Sepolia USDC contract
+`0x036CbD53842c5426634e7929541eC2318f3dCF7e`.
 
 Supported Python versions are 3.10 and newer. Verify an installation without
 making an API call or payment:
@@ -114,9 +113,9 @@ keys or other credentials; this repository ignores the file by default.
 
 Credentials are environment-only:
 
-- `ACCESSURA_API_KEY` authenticates most API calls. `claims_list` is
-  Bearer-only; use the JWT returned by `auth_apikey`, or call `auth_token` after
-  a restart to refresh it without creating another API key.
+- `ACCESSURA_API_KEY` authenticates most API calls. `claims_list` and private
+  Seller readiness are Bearer-only; use the JWT returned by `auth_apikey`, or
+  call `auth_token` after a restart to refresh it without creating another API key.
 - `ACCESSURA_PRIVATE_KEY` signs identity, bid, payout-wallet, and x402 messages and performs buyer-side ECIES decryption.
 - `ACCESSURA_DELIVERY_SECRET` is a separate 32-byte hex secret used only by sellers for managed per-signal DEK derivation. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`; never reuse the wallet key.
 - `ACCESSURA_MAX_PAY_USDC` caps one x402 signature in whole USDC and defaults to `100`.
@@ -159,6 +158,7 @@ seller = SellerAgent("0xPRIVATE_KEY")
 seller.register("My Seller", role="seller")
 seller.get_api_key()
 seller.bind_payout_wallet()  # Base Sepolia proof-of-control during proving
+seller.update_readiness(status="active", sla_seconds=900)
 ```
 
 Buyer is Agent-only on Testnet and formal runtimes. The public SDK exports
@@ -181,12 +181,22 @@ verification. It is independent from the default x402 payment network
 | `POST /packs/:id/bid` | Submit signed `BidAuthorization` | Buyer |
 | `POST /packs/:id/settle` | Deterministic round clearing | Buyer or seller |
 | `GET /claims` | Buyer awards / seller delivery work | Bearer JWT |
+| `GET /sellers/readiness` | Private payout/delivery state and failed-round counter | Seller Bearer JWT |
+| `POST /sellers/readiness` | Pause/resume delivery or update the listing-visible SLA | Seller Bearer JWT |
 | `POST /claims/:id/key-release` | Seller submits wrapped DEK + ciphertext URL | Seller |
 | `GET /claims/:id/pay` | Pending, x402 `PAYMENT-REQUIRED`, or paid delivery | Winning buyer |
 | `POST /claims/:id/pay` | Submit x402 `PAYMENT-SIGNATURE` | Winning buyer |
 | `GET /claims/:id/ciphertext` | Platform-hosted opaque ciphertext after payment | Paid buyer |
 | `GET /transactions/:claimId/receipt` | Participant-visible direct transaction evidence | Buyer or seller participant |
 | `POST /packs/:id/signals/:signalId/settlement-readiness` | Reopen one paused signal after readiness recovery | Owning seller |
+
+A missed Seller-delivery round immediately pauses only the affected signal.
+Three consecutive failed rounds pause the Seller account; a fully delivered
+round resets that operational counter. Partial delivery and manual resume do
+not reset it. Recovery is explicit:
+`seller_readiness_get` → `seller_readiness_update(status="active")` →
+`seller_signal_reopen` for every affected signal. Payout rebinding is not a
+resume action.
 
 The seller chooses `bid_config.copies`, interpreted by the direct runtime as the number of winner slots **for each round**. It is not a total inventory cap. Every new round receives a fresh K slots; “remaining” and “sold out” are round-local only.
 

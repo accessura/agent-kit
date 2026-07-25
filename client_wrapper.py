@@ -351,6 +351,44 @@ async def bind_seller_payout_wallet(chain: str = DEFAULT_X402_NETWORK) -> dict:
     })
 
 
+async def get_seller_readiness() -> dict:
+    """Read Seller-owned payout and delivery readiness state."""
+    return await _req(
+        "GET",
+        "/sellers/readiness",
+        extra_headers=_bearer_auth_headers(),
+    )
+
+
+async def update_seller_readiness(
+    status: str = "",
+    sla_seconds: Optional[int] = None,
+) -> dict:
+    """Pause/resume Seller delivery or update the listing-visible SLA."""
+    normalized_status = status.strip().lower()
+    if normalized_status and normalized_status not in {"active", "paused"}:
+        raise RuntimeError("status must be active or paused")
+    if sla_seconds is not None and (
+        isinstance(sla_seconds, bool)
+        or not isinstance(sla_seconds, int)
+        or not 30 <= sla_seconds <= 86_400
+    ):
+        raise RuntimeError("sla_seconds must be an integer from 30 to 86400")
+    if not normalized_status and sla_seconds is None:
+        raise RuntimeError("status or sla_seconds required")
+    body: dict[str, Any] = {}
+    if normalized_status:
+        body["status"] = normalized_status
+    if sla_seconds is not None:
+        body["sla_seconds"] = sla_seconds
+    return await _req(
+        "POST",
+        "/sellers/readiness",
+        body=body,
+        extra_headers=_bearer_auth_headers(),
+    )
+
+
 def register_identity(agent_name: str, role: str = "buyer") -> dict:
     """Register the env-keyed identity (idempotent). Signs the EIP-712
     IdentityRegistration payload with ACCESSURA_PRIVATE_KEY — the backend

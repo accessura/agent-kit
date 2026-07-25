@@ -278,6 +278,61 @@ def test_mcp_claim_list_fails_closed_without_bearer(monkeypatch):
         asyncio.run(client_wrapper.list_claims())
 
 
+def test_mcp_seller_readiness_uses_bearer_and_validates_updates(monkeypatch):
+    calls = []
+
+    async def fake_req(method, path, *, params=None, body=None, extra_headers=None):
+        calls.append((method, path, body, extra_headers))
+        return {"ok": True, "readiness": {"delivery": {"status": "active"}}}
+
+    monkeypatch.setattr(client_wrapper, "API_KEY", "acc_saved")
+    monkeypatch.setattr(client_wrapper, "TOKEN", "jwt_session")
+    monkeypatch.setattr(client_wrapper, "_req", fake_req)
+
+    asyncio.run(client_wrapper.get_seller_readiness())
+    asyncio.run(client_wrapper.update_seller_readiness(status="active", sla_seconds=900))
+
+    assert calls == [
+        ("GET", "/sellers/readiness", None, {"Authorization": "Bearer jwt_session"}),
+        (
+            "POST",
+            "/sellers/readiness",
+            {"status": "active", "sla_seconds": 900},
+            {"Authorization": "Bearer jwt_session"},
+        ),
+    ]
+    with pytest.raises(RuntimeError, match="status or sla_seconds"):
+        asyncio.run(client_wrapper.update_seller_readiness())
+    with pytest.raises(RuntimeError, match="30 to 86400"):
+        asyncio.run(client_wrapper.update_seller_readiness(sla_seconds=29))
+
+
+def test_mcp_seller_readiness_tools_expose_explicit_recovery(monkeypatch):
+    class FakeClient:
+        async def get_seller_readiness(self):
+            return {"readiness": {"blocking_reasons": ["seller_paused"]}}
+
+        async def update_seller_readiness(self, status="", sla_seconds=None):
+            return {
+                "ok": True,
+                "received": {"status": status, "sla_seconds": sla_seconds},
+            }
+
+    monkeypatch.setattr(server, "_require_auth", lambda: None)
+    monkeypatch.setattr(server, "_get_client", lambda: FakeClient())
+
+    read = json.loads(asyncio.run(server.seller_readiness_get.__wrapped__()))
+    updated = json.loads(asyncio.run(
+        server.seller_readiness_update.__wrapped__(
+            status="active",
+            sla_seconds=900,
+        )
+    ))
+
+    assert read["readiness"]["blocking_reasons"] == ["seller_paused"]
+    assert updated["received"] == {"status": "active", "sla_seconds": 900}
+
+
 def test_session_token_refreshes_bearer_without_creating_api_key(monkeypatch):
     calls = []
 
@@ -393,10 +448,15 @@ def test_claims_receipt_uses_direct_transaction_receipt(monkeypatch):
     assert result["receipt"]["payment"]["transaction_hash"] == "0xtx"
 
 
-def test_mcp_surface_is_exact_23_tool_contract():
+def test_mcp_surface_is_exact_25_tool_contract():
     names = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
-    assert len(names) == 23
-    assert {"auth_token", "claims_receipt"} <= names
+    assert len(names) == 25
+    assert {
+        "auth_token",
+        "claims_receipt",
+        "seller_readiness_get",
+        "seller_readiness_update",
+    } <= names
     assert {
         "packs_relist", "orders_list", "sales_list",
     }.isdisjoint(names)
@@ -411,13 +471,13 @@ def test_checked_in_exact_manifest_and_sha256_match_the_shared_contract():
     manifest_path = (
         Path(__file__).resolve().parents[1]
         / "docs"
-        / "exact-mcp-tool-manifest-v0.6.json"
+        / "exact-mcp-tool-manifest-v0.6.1.json"
     )
     raw = manifest_path.read_bytes()
     manifest = json.loads(raw)
 
     assert manifest == sorted(EXPECTED_MCP_TOOLS)
-    assert len(manifest) == len(set(manifest)) == 23
+    assert len(manifest) == len(set(manifest)) == 25
     assert hashlib.sha256(raw).hexdigest() == EXPECTED_MCP_MANIFEST_SHA256
 
 
@@ -629,13 +689,13 @@ def test_kit_keeps_all_five_stable_version_pins():
     from pathlib import Path
 
     root = Path(__file__).parent.parent
-    assert 'version = "0.6.0"' in (root / "pyproject.toml").read_text()
-    assert 'version = "0.6.0"' in (
+    assert 'version = "0.6.1"' in (root / "pyproject.toml").read_text()
+    assert 'version = "0.6.1"' in (
         root / "accessura_sdk" / "pyproject.toml"
     ).read_text()
-    assert (root / "accessura" / "VERSION").read_text().strip() == "0.6.0"
-    assert "@v0.6.0" in (root / "README.md").read_text()
-    assert "@v0.6.0" in (root / "server.py").read_text()
+    assert (root / "accessura" / "VERSION").read_text().strip() == "0.6.1"
+    assert "@v0.6.1" in (root / "README.md").read_text()
+    assert "@v0.6.1" in (root / "server.py").read_text()
 
 
 def test_broken_repo_external_javascript_examples_are_removed():
@@ -851,7 +911,7 @@ def test_ci_paths_cover_expanded_skill_and_funded_gates():
     assert '"accessura_sdk/pyproject.toml"' in skill_workflow
     assert '"examples/**"' in skill_workflow
     assert '"scripts/verify_funded_testnet_evidence.py"' in package_workflow
-    assert '"docs/exact-mcp-tool-manifest-v0.6.json"' in package_workflow
+    assert '"docs/exact-mcp-tool-manifest-v0.6.1.json"' in package_workflow
 
 
 def test_sdk_publish_rejects_unknown_info_type_before_network(monkeypatch):
