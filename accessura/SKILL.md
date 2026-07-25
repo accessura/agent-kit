@@ -39,7 +39,7 @@ The MCP server reads these environment variables (never pass keys as tool argume
 | `ACCESSURA_PRIVATE_KEY` | Yes (buyer+seller) | Your secp256k1 wallet private key (0x-prefixed hex). Used in-process for EIP-712 signing, buyer-side ECIES decryption, and seller payout-wallet proof. Never sent to the platform. |
 | `ACCESSURA_DELIVERY_SECRET` | Seller only | Dedicated 32-byte hex secret for per-signal DEK derivation. Must NOT equal `ACCESSURA_PRIVATE_KEY`. Generate: `openssl rand -hex 32`. |
 | `ACCESSURA_API_KEY` | After auth_apikey | Reusable `acc_...` key obtained from `auth_apikey`. If unset, run `auth_apikey` first (requires `ACCESSURA_PRIVATE_KEY`). |
-| `ACCESSURA_TOKEN` | Claims session only | Short-lived Bearer JWT required by `claims_list`. After an MCP restart, call `auth_token` to refresh it locally without creating another API key. |
+| `ACCESSURA_TOKEN` | Seller/claims session | Short-lived Bearer JWT required by `claims_list` and private Seller readiness. After an MCP restart, call `auth_token` to refresh it locally without creating another API key. |
 | `ACCESSURA_BASE_URL` | Optional | Defaults to `https://testnet.accessura.io` (Base Sepolia testnet). |
 | `ACCESSURA_MAX_PAY_USDC` | Optional | Per-payment signing ceiling in whole USDC; defaults to `100`. |
 | `ACCESSURA_ALLOW_MAINNET` | Mainnet only | Must equal `1` before `eip155:8453` readiness/signing is allowed. Leave unset for Base Sepolia. |
@@ -51,6 +51,7 @@ The MCP server reads these environment variables (never pass keys as tool argume
 | Discovery | `GET /api/v1/topics?state=active`, `GET /api/v1/packs?topic_slug=<slug>` | Public metadata only |
 | Auth | `/api/v1/agents/identity`, `/api/v1/auth/apikey`, `/api/v1/auth/token` | EIP-712 identity, reusable API key, and Bearer session proof |
 | Seller payout | `/api/v1/sellers/payout-wallet/challenge`, `/verify` | Proof-bound Base wallet |
+| Seller readiness | `GET/POST /api/v1/sellers/readiness` | Inspect strikes; pause/resume delivery; update listing-visible SLA |
 | Seller recovery | `POST /api/v1/packs/:id/signals/:signalId/settlement-readiness` | Explicit per-signal reopen after readiness is restored |
 | Bidding | `GET/POST /api/v1/packs/:id/bid` | Read round, then submit signed `BidAuthorization` |
 | Settlement | `POST /api/v1/packs/:id/settle` | Deterministic round clearing, no HOLD |
@@ -96,7 +97,13 @@ Buyer expiry promotes only the affected slot from the next unused deterministic 
 5. Call `signals_append` with `content_text` (plaintext). The MCP server encrypts it locally in-process using `ACCESSURA_DELIVERY_SECRET`, derives a per-signal DEK, and uploads only the ciphertext — the platform never sees plaintext. **Save the returned `signal_id` and `content_b64`** — `claims_deliver` needs them. A pack is not biddable until it has at least one signal.
 6. Poll `claims_list(role="seller")` every 15–30 seconds. The response includes `claim_id`, `pack_id`, `signal_id`, `buyer_agent_id`, and `buyer_encryption_pubkey` for each pending delivery.
 7. For every award, call `claims_deliver`. The MCP client automatically re-derives the per-signal DEK from `ACCESSURA_DELIVERY_SECRET` and wraps it to the buyer’s ECIES public key — you only provide the claim/pack/signal IDs, buyer identity, and the original `content_b64`. For `ciphertext_url`, the platform-hosted opaque ciphertext endpoint is used automatically.
-8. If a delivery miss paused that signal, restore payout and delivery readiness, then explicitly call `seller_signal_reopen`.
+8. If a delivery miss paused a signal, call `seller_readiness_get`. If
+   `seller_paused` is present, call
+   `seller_readiness_update(status="active")`, then call
+   `seller_signal_reopen` for every affected signal. Payout rebinding does not
+   resume delivery. One failed round pauses its Signal; three consecutive
+   failed rounds pause the account. Only a fully delivered round resets that
+   counter—partial delivery and manual resume do not.
 9. Save each `claim_id` and poll `claims_receipt` for confirmed direct-payment
    evidence. You can also check your payout wallet on BaseScan. There is no
    separate orders/sales history tool.

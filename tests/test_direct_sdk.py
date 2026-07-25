@@ -258,6 +258,48 @@ def test_claim_lists_fail_closed_without_bearer():
         seller.list_claims()
 
 
+def test_seller_readiness_uses_bearer_and_validates_updates(monkeypatch):
+    calls = []
+
+    def fake_request(method, url, headers, body=None):
+        calls.append((method, url, headers, body))
+        return {"ok": True, "readiness": {"delivery": {"status": "active"}}}
+
+    import accessura_sdk.client as client
+    monkeypatch.setattr(client, "_request", fake_request)
+    seller = SellerAgent(
+        "0x" + "22" * 32,
+        base_url="https://market.example",
+        delivery_secret="ab" * 32,
+        api_key="acc_seller",
+        token="jwt_seller",
+    )
+
+    seller.get_readiness()
+    seller.update_readiness(status="active", sla_seconds=900)
+
+    assert calls == [
+        (
+            "GET",
+            "https://market.example/api/v1/sellers/readiness",
+            {"Authorization": "Bearer jwt_seller"},
+            None,
+        ),
+        (
+            "POST",
+            "https://market.example/api/v1/sellers/readiness",
+            {"Authorization": "Bearer jwt_seller"},
+            {"status": "active", "sla_seconds": 900},
+        ),
+    ]
+    with pytest.raises(ValueError, match="status or sla_seconds"):
+        seller.update_readiness()
+    with pytest.raises(ValueError, match="active or paused"):
+        seller.update_readiness(status="operator_override")
+    with pytest.raises(ValueError, match="30 to 86400"):
+        seller.update_readiness(sla_seconds=86_401)
+
+
 def test_managed_seller_append_returns_only_its_local_ciphertext(monkeypatch):
     requests = []
 
@@ -336,6 +378,8 @@ def test_mcp_public_surface_has_one_explicit_payment_action():
     assert '@safe("auth.token")' in source
     assert '@safe("payments.readiness")' in source
     assert '@safe("seller.signal_reopen")' in source
+    assert '@safe("seller.readiness_get")' in source
+    assert '@safe("seller.readiness_update")' in source
     assert "confirm_real_payment" in source
     assert '@safe("wallet.balance")' not in source
     assert '@safe("wallet.deposit")' not in source
@@ -365,6 +409,8 @@ def test_mcp_public_surface_has_one_explicit_payment_action():
     assert hasattr(BuyerAgent, "get_transaction_receipt")
     assert hasattr(SellerAgent, "get_transaction_receipt")
     assert hasattr(SellerAgent, "login")
+    assert hasattr(SellerAgent, "get_readiness")
+    assert hasattr(SellerAgent, "update_readiness")
 
 
 def test_sdk_constructors_accept_saved_credentials():

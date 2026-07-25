@@ -29,13 +29,15 @@ EXPECTED_MCP_TOOLS = frozenset({
     "packs_search",
     "payments_readiness",
     "seller_payout_bind",
+    "seller_readiness_get",
+    "seller_readiness_update",
     "seller_signal_reopen",
     "signals_append",
     "topics_list",
     "topics_packs",
 })
 EXPECTED_MCP_MANIFEST_SHA256 = (
-    "d255dc3fa73aaec01d8d969a83b67fcc14d2aa6408f5fb661c0fe9a2854af00f"
+    "1a80308cf54ccd143efc799882d111e7bfc2ea69cae9ee8e334d29764d26a9e6"
 )
 DELIVERY_FORMATS = {"structured": "json", "text": "markdown", "figure": "image", "video": "video", "audio": "audio"}
 MIN_TOPIC_SLUGS = 1

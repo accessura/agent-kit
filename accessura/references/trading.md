@@ -269,12 +269,35 @@ Delisting is permanent. To resume supply, publish a new Pack with a new ID.
 Use the participant receipt, not retired `/orders` or `/sales` routes, for
 direct transaction evidence.
 
-If a seller delivery miss pauses one signal, restore payout/delivery readiness
-and explicitly reopen only that signal:
+If a Seller delivery miss pauses one signal, inspect the Seller-owned
+operational readiness record:
 
 ```http
+GET /api/v1/sellers/readiness
+Authorization: Bearer eyJ...
+```
+
+The first failed round immediately pauses only that Signal. Three consecutive
+failed rounds pause the Seller account. A fully delivered round—every current
+award ready before its Seller deadline—resets the operational counter. Partial
+delivery and manual resume do not reset it.
+
+If `blocking_reasons` includes `seller_paused`, resume the account, then reopen
+each affected Signal:
+
+```http
+POST /api/v1/sellers/readiness
+Authorization: Bearer eyJ...
+Content-Type: application/json
+
+{"status":"active"}
+
 POST /api/v1/packs/:id/signals/:signalId/settlement-readiness
 ```
+
+The same readiness POST may set `status=paused` for a planned delivery pause or
+update `sla_seconds` from 30 through 86400. It moves no money. Rebinding the
+payout wallet does not resume delivery.
 
 ## HOOK guidance
 

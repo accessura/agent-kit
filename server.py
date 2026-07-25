@@ -2,7 +2,7 @@
 """Accessura MCP Server — buyer + seller tools for the direct x402 API surface.
 
 Usage:
-    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.6.0"
+    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.6.1"
     ACCESSURA_API_KEY=acc_... accessura-mcp              # stdio (Claude Code)
     ACCESSURA_API_KEY=acc_... accessura-mcp --http 3000  # HTTP transport
 
@@ -39,7 +39,7 @@ instructions to follow.
 import functools
 import json
 import sys
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -844,6 +844,45 @@ async def seller_payout_bind(chain: str = "eip155:84532") -> str:
 
 
 @mcp.tool()
+@safe("seller.readiness_get")
+async def seller_readiness_get() -> str:
+    """Read the authenticated Seller's payout and delivery readiness.
+
+    Use this before recovery to inspect blocking_reasons, delivery status, SLA,
+    and the consecutive failed-round counter. Requires a Bearer session; call
+    auth_token after an MCP restart.
+    """
+    _require_auth()
+    data = await _get_client().get_seller_readiness()
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+@safe("seller.readiness_update")
+async def seller_readiness_update(
+    status: str = "",
+    sla_seconds: Optional[int] = None,
+) -> str:
+    """Pause/resume Seller delivery or update its listing-visible SLA.
+
+    This is an operational Seller action and never moves funds. After an
+    automatic account pause, set status="active", then call
+    seller_signal_reopen for every affected signal. Manual resume does not
+    erase delivery strikes; only a fully delivered round resets them.
+
+    Args:
+        status: Optional active or paused delivery status
+        sla_seconds: Optional delivery SLA from 30 through 86400 seconds
+    """
+    _require_auth()
+    data = await _get_client().update_seller_readiness(
+        status=status,
+        sla_seconds=sla_seconds,
+    )
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
 @safe("seller.signal_reopen")
 async def seller_signal_reopen(pack_id: str, signal_id: str) -> str:
     """Reopen one paused signal after restoring payout and delivery readiness."""
@@ -900,7 +939,7 @@ async def seller_flow() -> str:
 2. Call auth_apikey to get your API key (activated in-process immediately).
    SAVE the returned api_key and set ACCESSURA_API_KEY=acc_... for future sessions.
 3. On later MCP restarts, call auth_token to refresh the Bearer token used by
-   claims_list without creating another API key.
+   claims_list and seller readiness without creating another API key.
 4. Ensure ACCESSURA_DELIVERY_SECRET is a dedicated 32-byte hex secret
    (generate with openssl rand -hex 32), never derived from ACCESSURA_PRIVATE_KEY.
 5. Call seller_payout_bind to prove the Base Sepolia payout wallet. Your wallet
@@ -924,8 +963,10 @@ async def seller_flow() -> str:
    auto-wraps the DEK to the buyer's ECIES public key.
 10. Poll claims_receipt with the saved claim_id; paid_delivered plus the
     transaction hash confirms direct Buyer-to-Seller payment.
-11. If a delivery miss paused a signal, restore readiness and call
-   seller_signal_reopen.
+11. If a delivery miss paused a signal, call seller_readiness_get. If the
+    account is paused, call seller_readiness_update(status="active"), then call
+    seller_signal_reopen for every affected signal. Rebinding payout does not
+    resume delivery. Manual resume does not erase delivery strikes.
 
 Do NOT include signals in pack creation — append them separately."""
 
