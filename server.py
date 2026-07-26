@@ -2,7 +2,7 @@
 """Accessura MCP Server — buyer + seller tools for the direct x402 API surface.
 
 Usage:
-    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.7.0"
+    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.8.0"
     ACCESSURA_API_KEY=acc_... accessura-mcp              # stdio (Claude Code)
     ACCESSURA_API_KEY=acc_... accessura-mcp --http 3000  # HTTP transport
 

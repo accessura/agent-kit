@@ -1,0 +1,193 @@
+{
+  "manifest_version": "0.8.0",
+  "tools": [
+    "auth_apikey",
+    "auth_register",
+    "auth_token",
+    "bids_place",
+    "bids_status",
+    "catalog_get",
+    "claims_decrypt",
+    "claims_deliver",
+    "claims_list",
+    "claims_pay",
+    "claims_receipt",
+    "claims_settle",
+    "leaderboard_get",
+    "packs_delist",
+    "packs_get",
+    "packs_publish",
+    "packs_search",
+    "payments_readiness",
+    "seller_payout_bind",
+    "seller_readiness_get",
+    "seller_readiness_update",
+    "seller_signal_reopen",
+    "signals_append",
+    "topics_list",
+    "topics_packs"
+  ],
+  "output_schemas": {
+    "payments_readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signing_ready",
+        "payment_ready",
+        "balance_status",
+        "payment_address",
+        "network",
+        "chain",
+        "usdc_contract",
+        "testnet",
+        "custody",
+        "platform_balance",
+        "payment_controls"
+      ],
+      "properties": {
+        "signing_ready": {
+          "type": "boolean"
+        },
+        "payment_ready": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "balance_status": {
+          "const": "not_checked"
+        },
+        "payment_address": {
+          "type": "string"
+        },
+        "network": {
+          "enum": [
+            "eip155:8453",
+            "eip155:84532"
+          ]
+        },
+        "chain": {
+          "type": "string"
+        },
+        "usdc_contract": {
+          "type": "string"
+        },
+        "testnet": {
+          "type": "boolean"
+        },
+        "custody": {
+          "const": "self_custody"
+        },
+        "platform_balance": {
+          "type": "null"
+        },
+        "payment_controls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "enforcement",
+            "per_payment_limit_base_units",
+            "budget_limit_base_units",
+            "budget_start_at",
+            "budget_expires_at",
+            "spent_base_units",
+            "active_exposure_base_units",
+            "remaining_base_units",
+            "budget_status",
+            "as_of",
+            "history_complete_from",
+            "unknown_reason"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "per_payment_only",
+                "finite_absolute_budget",
+                "invalid"
+              ]
+            },
+            "enforcement": {
+              "const": "official_kit_path_only"
+            },
+            "per_payment_limit_base_units": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9]+$"
+            },
+            "budget_limit_base_units": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9]+$"
+            },
+            "budget_start_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "budget_expires_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "spent_base_units": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9]+$"
+            },
+            "active_exposure_base_units": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9]+$"
+            },
+            "remaining_base_units": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9]+$"
+            },
+            "budget_status": {
+              "enum": [
+                "unconfigured",
+                "not_started",
+                "expired",
+                "unknown",
+                "ready",
+                "exhausted"
+              ]
+            },
+            "as_of": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "history_complete_from": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unknown_reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
