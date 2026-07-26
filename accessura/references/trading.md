@@ -3,7 +3,7 @@
 Launch contract:
 
 ```text
-buyer:  discover -> signed bid -> settle -> award -> seller delivery -> direct x402 pay -> decrypt
+buyer:  discover -> EIP-3009-backed bid -> settle -> award -> seller delivery/payment -> decrypt
 seller: self-custodied payout -> publish -> signal -> award -> wrapped-key delivery
 ```
 
@@ -50,7 +50,8 @@ GET /api/v1/packs/:id/bid?signal_id=sig-...
 Authorization: ApiKey acc_...
 ```
 
-Sign the returned `round.round_id` into the EIP-712 `BidAuthorization`, then submit:
+Validate `payment_terms`, sign compact EIP-3009 for the exact bid amount, hash
+that authorization, and sign the hash into `BidAuthorization`:
 
 ```http
 POST /api/v1/packs/:id/bid
@@ -60,6 +61,17 @@ Content-Type: application/json
 {
   "bid_price": 0.15,
   "signal_id": "sig-...",
+  "payment_authorization": {
+    "signature": "0x...",
+    "authorization": {
+      "from": "0xBuyer",
+      "to": "0xFrozenSellerPayout",
+      "value": "150000",
+      "validAfter": "0",
+      "validBefore": "unix-seconds",
+      "nonce": "0x...32-bytes"
+    }
+  },
   "authorization": {
     "bid_id": "bid_...",
     "pack_id": "pack-...",
@@ -73,13 +85,19 @@ Content-Type: application/json
     "window_id": "round-...",
     "nonce": "...",
     "expiry": "ISO timestamp",
+    "payment_authorization_fingerprint": "sha256:...",
     "domain": {"name":"WorldcupProtocol","version":"1","chainId":8453,"verifyingContract":"0x0000000000000000000000000000000000000000"},
     "signature": "0x..."
   }
 }
 ```
 
-The SDK and MCP integrations build this object automatically. The bid is sealed, authenticated, and replay-bound to one round. It does not reserve or move money. If the round changes between read and POST, refresh the round and sign again.
+The SDK and MCP integrations build this object automatically. `bids_place` is
+the financial authorization checkpoint: it applies the standing budget before
+signing. The bid is sealed, authenticated, and replay-bound to one round. It
+does not reserve or move money, but it is irrevocable for that round. If it
+wins, seller delivery triggers submission. If the round changes between read
+and POST, refresh both signatures.
 
 The `WorldcupProtocol` EIP-712 domain keeps `chainId: 8453` as a fixed signing
 contract shared with the live API. This identifier is independent from the
@@ -95,9 +113,11 @@ Authorization: ApiKey acc_...
 {"signal_id":"sig-..."}
 ```
 
-The engine deterministically ranks bids and assigns up to K initial awards. Clearing creates payment intents, not platform HOLDs.
-
-Buyer expiry is slot-local: when an awarded buyer misses the payment deadline, only that slot promotes the next unused deterministic rank from the same round. If the seller misses the delivery deadline, the round pauses; buyers are not promoted around a seller failure.
+The engine deterministically ranks bids and assigns up to K awards. Clearing
+creates payment intents, not platform HOLDs, and submits no payment. Ranked
+non-winners are terminal transcript evidence; their authorizations are never
+submitted and cannot be promoted. If the seller misses an original award's
+delivery deadline, that signal pauses.
 
 `paid_delivered_slots` is analytics for completed payments in that round. It never reduces the capacity of future rounds.
 
@@ -111,15 +131,16 @@ Authorization: Bearer eyJ...
 Direct claim states progress through:
 
 ```text
-award_pending_delivery -> payment_required -> paid_delivered
+award_pending_delivery -> paid_delivered
 ```
 
-Do not pay until the seller has submitted a buyer-specific wrapped DEK and ciphertext URL.
+The seller submits a buyer-specific wrapped DEK and ciphertext URL. Only after
+that envelope is durable does the backend submit the winning authorization.
 The claims route is Bearer-only even when an API key is also saved. After an
 MCP restart, call `auth_token`; in the SDK, call `login()` to refresh the JWT
 without issuing another API key.
 
-### 5. Read x402 payment requirement
+### 5. Read automatic payment status
 
 ```http
 GET /api/v1/claims/:claim_id/pay
@@ -128,59 +149,21 @@ Authorization: ApiKey acc_...
 
 Responses:
 
-- `202`: seller delivery is pending.
-- `402` plus `PAYMENT-REQUIRED`: exact Base USDC payee, asset, amount, resource, and timeout.
+- `202`: seller delivery or automatic settlement is pending.
 - `200`: payment was already verified and the paid delivery is available.
+- `402`: compatibility-only for a claim created before binding bids.
 
-Review `payTo` and `amount` before signing. `payTo` is the seller’s proof-bound payout wallet, never Accessura.
+`claims_pay(claim_id)` is a status read on the binding path; there is no second
+Buyer confirmation. Its confirmed call exists only for pre-binding 402 claims.
+The configured facilitator verifies and settles Base USDC directly from Buyer
+to Seller and pays gas. Accessura never receives the funds.
 
-During local/Testnet proving, require `network=eip155:84532`, Base Sepolia test
-USDC `0x036CbD53842c5426634e7929541eC2318f3dCF7e`, and EIP-712 domain
-`USDC` version `2`. After explicit mainnet promotion, require
-`network=eip155:8453`, Base USDC, and domain `USD Coin` version `2`. The SDK
-signs the exact server challenge and refuses network/asset/domain mismatches.
-
-### 6. Explicitly pay the seller
-
-Sign USDC `TransferWithAuthorization` (EIP-3009) locally and submit the x402 v2 payload:
-
-```http
-POST /api/v1/claims/:claim_id/pay
-Authorization: ApiKey acc_...
-PAYMENT-SIGNATURE: <base64 x402 v2 payload>
-
-{}
-```
-
-The configured facilitator verifies and settles Base USDC directly from buyer to seller. The MCP tool requires:
-
-```text
-claims_pay(claim_id=..., confirm_real_payment=false)
-# verify the returned live network, asset, payTo, amount, and timeout
-claims_pay(
-    claim_id=...,
-    confirm_real_payment=true,
-    expected_amount=<preview accepts[0].amount>,
-    expected_pay_to=<preview accepts[0].payTo>,
-)
-```
-
-The confirmed call is refused if the live amount or recipient differs from the
-preview, if it breaches the per-payment ceiling, or if the cumulative
-authorization is unavailable/expired/insufficient. The payment checkpoint
-recognizes the current awarded claim as existing exposure so paying it does not
-double-count the same commitment. Base Sepolia defaults
-`ACCESSURA_MAX_PAY_USDC` to `100`; mainnet has no default and requires explicit
-per-payment and cumulative limits plus finite start/expiry timestamps. Leave
-`ACCESSURA_ALLOW_MAINNET` unset for Base Sepolia. No bid, settlement,
-claim-list, or decrypt operation implicitly pays.
-
-The SDK serializes the fact read, signature, and submission inside one process.
+The SDK serializes the fact read, signatures, and bid submission inside one process.
 It is stateless across processes, so two processes sharing a wallet can race
 and exceed the software budget. Dedicated-wallet funding remains the hard loss
 ceiling.
 
-### 7. Fetch and decrypt
+### 6. Fetch and decrypt
 
 After `paid_delivered`, the response contains `platform_broker` and `ciphertext_url`.
 
@@ -336,7 +319,8 @@ Describe the observation method, category, freshness, and verifiability without 
 
 ## Non-negotiable rules
 
-- Funds move only through the buyer’s explicit x402 payment action.
+- `bids_place` pre-signs exact payment; only seller delivery can trigger
+  submission for a winner.
 - Accessura is never the seller payment recipient and has no launch platform balance/HOLD.
 - Every bid is buyer-signed and bound to one current round.
 - K is seller-selected per round; there is no cross-round inventory depletion.

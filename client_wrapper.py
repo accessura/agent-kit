@@ -37,7 +37,6 @@ from accessura_sdk.crypto import (
 )
 from accessura_sdk.client import (
     DEFAULT_X402_NETWORK,
-    _active_payment_network,
     _assert_safe_auth_challenge,
     _base_payment_controls,
     _enforce_payment_controls,
@@ -46,6 +45,7 @@ from accessura_sdk.client import (
     _payment_readiness,
     _public_payment_controls,
     _sign_bid_authorization,
+    _sign_bid_payment_authorization,
     _sign_x402_payment,
     _summarize_payment_controls,
     _unknown_payment_controls,
@@ -296,35 +296,63 @@ async def place_bid(pack_id: str, bid_data: dict) -> dict:
     price = float(bid_data.get("bid_price"))
     if not signal_id:
         raise RuntimeError("signal_id is required for a direct signed bid")
-    network = _active_payment_network()
     bid_amount = _usdc_price_base_units(price)
     async with _payment_authority_lock():
-        controls = await _load_payment_controls(network)
-        _enforce_payment_controls(
-            amount_base_units=bid_amount,
-            network=network,
-            controls=controls,
-            action="bid",
-        )
         if bid_data.get("authorization"):
+            if not bid_data.get("payment_authorization"):
+                raise RuntimeError(
+                    "a caller-supplied BidAuthorization must include its "
+                    "payment_authorization")
+            status = await get_bid_status(pack_id, signal_id)
+            network = str((status.get("payment_terms") or {}).get("network", ""))
+            controls = await _load_payment_controls(network)
+            _enforce_payment_controls(
+                amount_base_units=bid_amount,
+                network=network,
+                controls=controls,
+                action="binding bid submission",
+            )
             return await _post(f"/packs/{_quote(pack_id)}/bid", bid_data)
-        from accessura_sdk.client import BuyerAgent
-        agent = BuyerAgent(private_key=_require_private_key(), base_url=BASE_URL)
         for attempt in range(2):
             status = await get_bid_status(pack_id, signal_id)
-            if attempt:
-                controls = await _load_payment_controls(network)
-                _enforce_payment_controls(
-                    amount_base_units=bid_amount,
-                    network=network,
-                    controls=controls,
-                    action="bid",
+            payment_terms = status.get("payment_terms")
+            network = str((payment_terms or {}).get("network", ""))
+            controls = await _load_payment_controls(network)
+            _enforce_payment_controls(
+                amount_base_units=bid_amount,
+                network=network,
+                controls=controls,
+                action="binding bid",
+            )
+            from accessura_sdk.client import BuyerAgent
+            agent = BuyerAgent(
+                private_key=_require_private_key(),
+                base_url=BASE_URL,
+            )
+            payment_authorization, payment_fingerprint = (
+                _sign_bid_payment_authorization(
+                    _account(),
+                    payment_terms,
+                    bid_amount,
+                    payment_controls=controls,
                 )
+            )
             authorization = _sign_bid_authorization(
-                _account(), agent._enc_pub, pack_id, signal_id, price, status)
+                _account(),
+                agent._enc_pub,
+                pack_id,
+                signal_id,
+                price,
+                status,
+                payment_fingerprint,
+            )
             code, _, response = await _req_response(
                 "POST", f"/packs/{_quote(pack_id)}/bid",
-                body={**bid_data, "authorization": authorization})
+                body={
+                    **bid_data,
+                    "authorization": authorization,
+                    "payment_authorization": payment_authorization,
+                })
             if code < 400:
                 return response
             if (
@@ -526,7 +554,8 @@ def _sign_typed_payload(payload: dict) -> str:
 
     Guarded against blind-signing: a spoofed/compromised backend (or a hostile
     ACCESSURA_BASE_URL) must not coax the wallet into signing a disguised USDC
-    TransferWithAuthorization through an auth path. Only claims_pay moves money.
+    TransferWithAuthorization through an auth path. Only the binding-bid signer
+    (or legacy claims_pay compatibility path) may authorize payment.
     """
     from eth_account.messages import encode_typed_data
 

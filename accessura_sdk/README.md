@@ -22,17 +22,9 @@ buyer.settle(packs[0]["id"], packs[0]["signals"][0]["id"])
 claims = buyer.get_claims()
 claim_id = claims[0]["claim_id"]
 
-# The GET is read-only. A 402 response includes the exact x402 requirement.
+# The GET is read-only. Seller delivery automatically submits the
+# authorization that bid() pre-signed.
 status = buyer.get_payment(claim_id)
-
-# Explicit payment step: EIP-3009 is signed locally and Base USDC goes
-# directly from the buyer wallet to the seller payout wallet.
-offer = status["accepts"][0]
-delivery = buyer.pay_claim(
-    claim_id,
-    expected_amount=str(offer["amount"]),
-    expected_pay_to=offer["payTo"],
-)
 
 # Fetch opaque ciphertext without forwarding Accessura credentials to the
 # seller host, then decrypt locally.
@@ -40,12 +32,13 @@ plaintext = buyer.decrypt_paid_claim(claim_id)
 receipt = buyer.get_transaction_receipt(claim_id)
 ```
 
-`bid()` checks the per-payment ceiling and cumulative authority before signing
-the current round’s `BidAuthorization`, then retries once if the round turns
-over between status read and submission. A bid does not reserve funds.
-`pay_claim()` is the only SDK step above that moves funds and re-checks the same
-authority immediately before its EIP-3009 signature. Bind it to the prior
-preview with `expected_amount` and `expected_pay_to`.
+`bid()` checks the per-payment ceiling and cumulative authority, validates the
+round-frozen payTo/network/asset/SLA window, and signs an exact EIP-3009
+authorization plus a fingerprint-bound `BidAuthorization`. A bid does not
+reserve or move funds, but it is irrevocable for that round: if it wins, seller
+delivery triggers direct Buyer-to-Seller submission. Non-winner authorizations
+are never submitted. `pay_claim()` remains only as compatibility recovery for
+pre-binding claims that still return a 402 challenge.
 
 Give the agent a dedicated wallet funded only with the Buyer principal's
 intended loss ceiling. The kit's `ACCESSURA_MAX_PAY_USDC` and finite

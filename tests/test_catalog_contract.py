@@ -426,6 +426,29 @@ def test_claims_pay_false_returns_live_preview_without_payment(monkeypatch):
     assert fake.paid is False
 
 
+def test_claims_pay_is_read_only_status_for_binding_claim(monkeypatch):
+    class FakeClient:
+        async def get_claim_payment(self, claim_id):
+            return {
+                "_http_status": 202,
+                "claim_id": claim_id,
+                "payment_mode": "on_delivery_preauthorized",
+                "payment_trigger": "seller_delivery_ready",
+                "state": "award_pending_delivery",
+            }
+
+    monkeypatch.setattr(server, "_require_auth", lambda: None)
+    monkeypatch.setattr(server, "_get_client", lambda: FakeClient())
+    result = json.loads(asyncio.run(
+        server.claims_pay.__wrapped__(
+            "claim-binding", confirm_real_payment=False
+        )
+    ))
+    assert result["payment_performed"] is False
+    assert result["confirmation_required"] is False
+    assert "no Buyer payment action" in result["next_action"]
+
+
 def test_payments_readiness_exposes_nested_payment_controls(monkeypatch):
     class FakeClient:
         async def payment_readiness(self, network):
@@ -469,6 +492,27 @@ def test_mcp_bid_and_payment_fail_closed_when_budget_facts_are_unknown(monkeypat
     monkeypatch.setenv("ACCESSURA_BUDGET_EXPIRES_AT", "2099-01-01T00:00:00Z")
     monkeypatch.setattr(client_wrapper, "_load_payment_controls", unknown_controls)
     monkeypatch.setattr(client_wrapper, "_post", no_network)
+    monkeypatch.setattr(
+        client_wrapper,
+        "get_bid_status",
+        lambda *_args, **_kwargs: asyncio.sleep(0, result={
+            "round": {
+                "round_id": "round-1",
+                "closes_at": "2099-01-01T00:00:00Z",
+            },
+            "payment_terms": {
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                "pay_to": "0x" + "22" * 20,
+                "token_domain": {"name": "USDC", "version": "2"},
+                "authorization_valid_before_min": "4070908800",
+                "authorization_valid_before_max": "4070909100",
+                "payment_trigger": "seller_delivery_ready",
+                "settlement_rule": "top_n_pay_as_bid",
+            },
+        }),
+    )
 
     with pytest.raises(RuntimeError, match="budget_status is 'unknown'"):
         asyncio.run(client_wrapper.place_bid(

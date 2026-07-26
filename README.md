@@ -14,7 +14,7 @@ Connect an AI buyer or a human/agent seller to the Accessura encrypted-data mark
 All authenticated launch integrations follow the same lifecycle:
 
 ```text
-buyer:  discover -> signed bid -> settle -> wait for delivery -> explicit x402 pay -> decrypt
+buyer:  discover -> binding bid (EIP-3009) -> settle -> wait for seller delivery/payment -> decrypt
 seller: register -> bind payout wallet -> publish -> append encrypted signal -> deliver envelope + ciphertext URL
 ```
 
@@ -67,9 +67,10 @@ python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/ag
 claude mcp add accessura -- accessura-mcp
 ```
 
-`v0.7.0` adds principal-configured finite payment authority, bid/payment
-checkpoints, and read-only platform payment/exposure facts without adding a
-platform budget ledger. The install reference becomes available
+`v0.7.0` adds principal-configured finite payment authority and read-only
+platform payment/exposure facts without adding a platform budget ledger. The
+binding-bid update moves the EIP-3009 signing checkpoint into `bids_place`:
+seller delivery, not clearing, triggers submission. The install reference becomes available
 only after the reviewed release is tagged; this development PR does not create
 or move a tag. The immutable version tag makes the installation reproducible and installs both the
 `accessura_sdk` Python package and the `accessura-mcp` console command. To
@@ -117,13 +118,16 @@ Credentials are environment-only:
 - `ACCESSURA_API_KEY` authenticates most API calls. `claims_list` and private
   Seller readiness are Bearer-only; use the JWT returned by `auth_apikey`, or
   call `auth_token` after a restart to refresh it without creating another API key.
-- `ACCESSURA_PRIVATE_KEY` signs identity, bid, payout-wallet, and x402 messages and performs buyer-side ECIES decryption. Give a Buyer agent a dedicated wallet funded only with the principal's intended loss ceiling; never give it the principal's main wallet.
+- `ACCESSURA_PRIVATE_KEY` signs identity, binding-bid EIP-3009, payout-wallet, and protocol messages and performs buyer-side ECIES decryption. Give a Buyer agent a dedicated wallet funded only with the principal's intended loss ceiling; never give it the principal's main wallet.
 - `ACCESSURA_DELIVERY_SECRET` is a separate 32-byte hex secret used only by sellers for managed per-signal DEK derivation. Generate one with `python -c "import secrets; print(secrets.token_hex(32))"`; never reuse the wallet key.
 - `ACCESSURA_MAX_PAY_USDC` caps each bid/payment on the official kit path. Base Sepolia defaults to `100`; mainnet requires an explicit positive value.
 - `ACCESSURA_BUDGET_USDC`, `ACCESSURA_BUDGET_START_AT`, and `ACCESSURA_BUDGET_EXPIRES_AT` define a finite absolute grant over confirmed spend plus active exposure. There is no automatic daily/weekly reset.
 - `ACCESSURA_ALLOW_MAINNET=1` is required before the SDK will sign or report readiness for `eip155:8453`; mainnet also requires explicit per-payment and cumulative limits.
 - No MCP tool accepts a private key or DEK as an argument.
-- `claims_pay` is the only public MCP tool that moves funds and requires `confirm_real_payment=true`.
+- `bids_place` is financially binding: it signs exact EIP-3009 within the
+  standing grant. A winning authorization is submitted only after seller
+  delivery. `claims_pay` is read-only for binding claims and retains an
+  explicit-confirmation path only for pre-binding legacy claims.
 
 The direct MCP surface intentionally has no platform `wallet`, `deposit`,
 `withdraw`, receipt-ack, relist, orders, or sales tool. Delist is terminal;
@@ -139,19 +143,13 @@ buyer = BuyerAgent("0xPRIVATE_KEY")
 buyer.register("My Buyer Agent")
 buyer.get_api_key()
 
-# bid() first reads the current round and signs BidAuthorization locally.
+# bid() reads frozen payment terms, applies the budget, and signs both the
+# compact EIP-3009 authorization and its fingerprint-bound BidAuthorization.
 bid = buyer.bid(pack_id, signal_id, 0.15)
 buyer.settle(pack_id, signal_id)
 
-# Paying is a separate, explicit real-money action.
-payment = buyer.get_payment(claim_id)
-if payment["_http_status"] == 402:
-    offer = payment["accepts"][0]
-    delivery = buyer.pay_claim(
-        claim_id,
-        expected_amount=str(offer["amount"]),
-        expected_pay_to=offer["payTo"],
-    )  # direct Base USDC -> seller
+# Seller delivery automatically submits a winning bid's stored authorization.
+payment_status = buyer.get_payment(claim_id)
 plaintext = buyer.decrypt_paid_claim(claim_id)
 receipt = buyer.get_transaction_receipt(claim_id)
 ```
