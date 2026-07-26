@@ -19,6 +19,7 @@
 """
 
 import base64
+import hashlib
 import json
 import os
 import secrets
@@ -128,6 +129,7 @@ X402_CHAIN_PROFILES = {
         "testnet": False,
     },
 }
+LONG_SELLER_DELIVERY_SLA_WARNING_SECONDS = 3_600
 
 BID_AUTHORIZATION_TYPES = {
     "BidAuthorization": [
@@ -143,6 +145,7 @@ BID_AUTHORIZATION_TYPES = {
         {"name": "window_id", "type": "string"},
         {"name": "nonce", "type": "string"},
         {"name": "expiry", "type": "string"},
+        {"name": "payment_authorization_fingerprint", "type": "string"},
     ],
 }
 
@@ -165,8 +168,9 @@ def _assert_safe_auth_challenge(payload: Any) -> None:
     guard a compromised/spoofed backend, a MITM, or a hostile ACCESSURA_BASE_URL
     could return an EIP-3009 USDC ``TransferWithAuthorization`` (USD Coin token
     domain) in place of an auth challenge and coax the wallet into signing a real
-    money movement outside ``claims_pay``. Only
-    ``claims_pay(confirm_real_payment=true)`` may authorize a transfer.
+    money movement outside the dedicated payment-signing paths. Only the
+    binding-bid signer (or legacy ``claims_pay`` compatibility path) may
+    authorize a transfer.
     """
     if not isinstance(payload, dict):
         raise RuntimeError("auth challenge payload must be an object")
@@ -536,6 +540,7 @@ def _enforce_payment_controls(
     claim_id: Optional[str] = None,
 ) -> None:
     """Refuse an over-limit bid/payment before its authorization is signed."""
+    _assert_network_allowed(network)
     config = _payment_control_config(network)
     ceiling = config["per_payment_limit_base_units"]
     if ceiling is not None and amount_base_units > ceiling:
@@ -611,7 +616,8 @@ def _js_number_string(value: float) -> str:
 
 def _sign_bid_authorization(account, encryption_pubkey: str, pack_id: str,
                             signal_id: str, price: float,
-                            round_status: dict) -> dict:
+                            round_status: dict,
+                            payment_authorization_fingerprint: str) -> dict:
     from eth_account.messages import encode_typed_data
 
     round_info = round_status.get("round") or round_status.get("window") or {}
@@ -635,6 +641,8 @@ def _sign_bid_authorization(account, encryption_pubkey: str, pack_id: str,
         "window_id": round_id,
         "nonce": secrets.token_hex(16),
         "expiry": expiry,
+        "payment_authorization_fingerprint":
+            payment_authorization_fingerprint,
         "domain": PROTOCOL_DOMAIN,
         "signature": "",
     }
@@ -643,6 +651,7 @@ def _sign_bid_authorization(account, encryption_pubkey: str, pack_id: str,
             "bid_id", "pack_id", "signal_id", "buyer_payment_address",
             "buyer_signing_key", "buyer_encryption_pubkey", "delegation_id",
             "window_id", "nonce", "expiry",
+            "payment_authorization_fingerprint",
         )},
         "signal_scope": _canonical_json(signal_scope),
         "price": _js_number_string(price),
@@ -650,6 +659,140 @@ def _sign_bid_authorization(account, encryption_pubkey: str, pack_id: str,
     typed = encode_typed_data(PROTOCOL_DOMAIN, BID_AUTHORIZATION_TYPES, message)
     authorization["signature"] = _sig_hex(account.sign_message(typed).signature)
     return authorization
+
+
+def _sign_bid_payment_authorization(
+        account, payment_terms: dict, amount_base_units: int, *,
+        payment_controls: Optional[dict] = None) -> tuple[dict, str]:
+    """Pre-sign the compact EIP-3009 authorization carried by a binding bid."""
+    from eth_account.messages import encode_typed_data
+
+    if not isinstance(payment_terms, dict):
+        raise RuntimeError("bid status did not return payment_terms")
+    _binding_bid_sla_risk_warnings(payment_terms)
+    network = str(payment_terms.get("network", ""))
+    profile = X402_CHAIN_PROFILES.get(network)
+    if profile is None:
+        raise RuntimeError(f"unsupported binding-bid payment network: {network}")
+    _assert_network_allowed(network)
+    if payment_terms.get("scheme") != "exact":
+        raise RuntimeError("binding-bid payment terms must use exact settlement")
+    asset = str(payment_terms.get("asset", ""))
+    if asset.lower() != str(profile["asset"]).lower():
+        raise RuntimeError(
+            f"binding-bid terms do not use configured {profile['label']} USDC")
+    token_domain = payment_terms.get("token_domain")
+    expected_domain = {"name": profile["domain_name"], "version": "2"}
+    if token_domain != expected_domain:
+        raise RuntimeError(
+            "binding-bid terms have an unexpected USDC EIP-712 domain")
+    pay_to = payment_terms.get("pay_to")
+    if not isinstance(pay_to, str) or not pay_to:
+        raise RuntimeError("binding-bid payment terms are missing pay_to")
+    if (
+        payment_terms.get("payment_trigger") != "seller_delivery_ready" or
+        payment_terms.get("settlement_rule") != "top_n_pay_as_bid"
+    ):
+        raise RuntimeError("binding-bid payment trigger or settlement rule is invalid")
+    minimum = str(payment_terms.get("authorization_valid_before_min", ""))
+    maximum = str(payment_terms.get("authorization_valid_before_max", ""))
+    if (
+        not minimum.isdigit() or not maximum.isdigit() or
+        int(minimum) <= int(time.time()) or int(maximum) < int(minimum)
+    ):
+        raise RuntimeError("binding-bid authorization validity window is invalid")
+    _enforce_payment_controls(
+        amount_base_units=amount_base_units,
+        network=network,
+        controls=payment_controls,
+        action="binding bid",
+    )
+    authorization = {
+        "from": account.address,
+        "to": pay_to,
+        "value": str(amount_base_units),
+        "validAfter": "0",
+        "validBefore": minimum,
+        "nonce": "0x" + secrets.token_hex(32),
+    }
+    types = {
+        "TransferWithAuthorization": [
+            {"name": "from", "type": "address"},
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "validAfter", "type": "uint256"},
+            {"name": "validBefore", "type": "uint256"},
+            {"name": "nonce", "type": "bytes32"},
+        ],
+    }
+    domain = {
+        "name": token_domain["name"],
+        "version": token_domain["version"],
+        "chainId": int(network.split(":", 1)[1]),
+        "verifyingContract": asset,
+    }
+    typed = encode_typed_data(domain, types, {
+        **authorization,
+        "value": int(authorization["value"]),
+        "validAfter": 0,
+        "validBefore": int(authorization["validBefore"]),
+    })
+    compact = {
+        "signature": _sig_hex(account.sign_message(typed).signature),
+        "authorization": authorization,
+    }
+    fingerprint = "sha256:" + hashlib.sha256(
+        _canonical_json(compact).encode("utf-8")
+    ).hexdigest()
+    return compact, fingerprint
+
+
+def _binding_bid_sla_risk_warnings(payment_terms: dict) -> list[dict]:
+    """Validate the frozen Seller SLA and surface long commitment risk."""
+    if not isinstance(payment_terms, dict):
+        raise RuntimeError("bid status did not return payment_terms")
+    raw_sla = payment_terms.get("seller_delivery_sla_seconds")
+    if isinstance(raw_sla, bool):
+        raise RuntimeError("binding-bid Seller delivery SLA must be an integer")
+    try:
+        sla_seconds = int(raw_sla)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "binding-bid payment terms are missing seller_delivery_sla_seconds"
+        ) from exc
+    if str(sla_seconds) != str(raw_sla) or not 30 <= sla_seconds <= 86_400:
+        raise RuntimeError(
+            "binding-bid Seller delivery SLA must be an integer from 30 to 86400 seconds"
+        )
+    if sla_seconds <= LONG_SELLER_DELIVERY_SLA_WARNING_SECONDS:
+        return []
+    return [{
+        "code": "LONG_SELLER_DELIVERY_SLA",
+        "seller_delivery_sla_seconds": sla_seconds,
+        "warning_threshold_seconds":
+            LONG_SELLER_DELIVERY_SLA_WARNING_SECONDS,
+        "message": (
+            f"Seller delivery SLA is {sla_seconds} seconds. If this bid wins, "
+            "the bid amount may remain committed in active exposure until "
+            "Seller delivery or the deadline. This SLA was exposed in "
+            "payment_terms before signing; proceed only if the duration is "
+            "acceptable."
+        ),
+    }]
+
+
+def _attach_payment_risk_warnings(
+        response: dict, risk_warnings: list[dict]) -> dict:
+    if not risk_warnings:
+        return response
+    attached = dict(response)
+    existing = attached.get("payment_risk_warnings")
+    attached["payment_risk_warnings"] = (
+        [*existing, *risk_warnings]
+        if isinstance(existing, list)
+        else risk_warnings
+    )
+    return attached
 
 
 def _sign_x402_payment(account, payment_required: dict, *,
@@ -1049,26 +1192,40 @@ class BuyerAgent:
     # ── bidding + settlement ───────────────────────────────────────────
 
     def bid(self, pack_id: str, signal_id: str, price: float) -> dict:
-        """Sign and submit one self-custodied bid for the current direct round."""
-        network = _active_payment_network()
+        """Sign a binding bid and its on-delivery EIP-3009 authorization."""
         bid_amount = _usdc_price_base_units(price)
         with self._payment_authority_lock:
             for attempt in range(2):
                 status = self.get_bid_status(pack_id, signal_id)
+                payment_terms = status.get("payment_terms")
+                network = str((payment_terms or {}).get("network", ""))
+                risk_warnings = _binding_bid_sla_risk_warnings(payment_terms)
                 controls = _load_payment_controls_sync(
                     api=self.api, headers=self._auth(), network=network)
-                _enforce_payment_controls(
-                    amount_base_units=bid_amount,
-                    network=network,
-                    controls=controls,
-                    action="bid",
+                payment_authorization, payment_fingerprint = (
+                    _sign_bid_payment_authorization(
+                        self._account,
+                        payment_terms,
+                        bid_amount,
+                        payment_controls=controls,
+                    )
                 )
                 authorization = _sign_bid_authorization(
-                    self._account, self._enc_pub, pack_id, signal_id, price, status)
+                    self._account,
+                    self._enc_pub,
+                    pack_id,
+                    signal_id,
+                    price,
+                    status,
+                    payment_fingerprint,
+                )
                 response = _request(
                     "POST", f"{self.api}/packs/{pack_id}/bid", self._auth(),
                     {"bid_price": price, "signal_id": signal_id,
-                     "authorization": authorization})
+                     "authorization": authorization,
+                     "payment_authorization": payment_authorization})
+                response = _attach_payment_risk_warnings(
+                    response, risk_warnings)
                 if (
                     response.get("error_code") != "BID_AUTHORIZATION_MISMATCH"
                     or attempt == 1
@@ -1081,9 +1238,14 @@ class BuyerAgent:
         params = ""
         if signal_id:
             params = f"?signal_id={urllib.parse.quote(signal_id)}"
-        return _request(
+        status = _request(
             "GET", f"{self.api}/packs/{pack_id}/bid{params}",
             self._auth())
+        payment_terms = status.get("payment_terms")
+        if not isinstance(payment_terms, dict):
+            return status
+        return _attach_payment_risk_warnings(
+            status, _binding_bid_sla_risk_warnings(payment_terms))
 
     def settle(self, pack_id: str, signal_id: str = "") -> dict:
         return _request(

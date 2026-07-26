@@ -54,15 +54,30 @@ cannot declare completeness, `payments_readiness` returns
 `payment_controls.budget_status="unknown"`. The tool itself remains usable, but
 a configured cumulative budget refuses both bid and payment signing.
 
-## Signing checkpoints
+## Binding-bid signing checkpoint
 
-- Before `BidAuthorization`, the kit checks the bid against the per-payment
-  ceiling and remaining cumulative authority.
-- Before EIP-3009 `TransferWithAuthorization`, the kit repeats both checks.
-  When the current claim is already represented by equal active exposure,
-  payment realizes that commitment and does not count it twice.
-- Preview binding, network/asset/domain validation, and the mainnet gate remain
-  independent checks.
+- `bids_place` reads the current round's frozen payTo, network, asset, token
+  domain, seller SLA, and permitted `validBefore` interval.
+- The Seller SLA remains configurable through 86400 seconds. Both
+  `bids_status` and the accepted bid result add a structured
+  `LONG_SELLER_DELIVERY_SLA` warning above 3600 seconds; it informs the Agent
+  before/at the signing checkpoint without silently changing or rejecting the
+  Seller's published terms.
+- Inside one process lock, the kit reads budget facts once, checks the bid
+  against the per-payment ceiling and remaining cumulative authority, and
+  signs exact EIP-3009 `TransferWithAuthorization`.
+- It hashes that compact authorization and includes the fingerprint in the
+  WorldcupProtocol `BidAuthorization` before submitting both objects.
+- The bid is financially binding for that round. Clearing does not submit the
+  transfer; seller delivery of the durable buyer-specific envelope does.
+- Non-winners are terminal and their authorizations are never submitted.
+- A durable Seller delivery followed by final Buyer payment failure does not
+  strike or pause the Seller. The Seller is still unpaid and receives no
+  replacement Buyer because binding rounds do not promote.
+- `claims_pay` becomes a status read for binding claims. Its explicit payment
+  confirmation survives only as compatibility recovery for older 402 claims.
+- Network/asset/domain validation and the mainnet gate remain independent
+  checks. The WorldcupProtocol domain itself is unchanged.
 
 The SDK and MCP wrapper serialize fact-read, signature, and submission inside
 one process. The kit is intentionally stateless: two processes sharing the
@@ -75,7 +90,8 @@ Dedicated-wallet funding remains the hard boundary.
 - `payments_readiness` adds the versioned nested `payment_controls` output
   schema; this is intentionally a v0.7.0 contract change.
 - No local state file or platform budget ledger is introduced.
-- No x402 signature shape, facilitator contract, or payment model is changed.
+- Compact EIP-3009 shape and facilitator submission remain standard x402 exact
+  EVM; only the signing/submission timing changes.
 - PR 2 absence produces `unknown`; it does not crash readiness or silently
   assume zero spend.
 - Base mainnet cannot sign with default or partial limit configuration.

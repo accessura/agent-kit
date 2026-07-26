@@ -16,9 +16,11 @@ from accessura_sdk.client import (
     SellerAgent,
     _canonical_json,
     _enforce_payment_controls,
+    _binding_bid_sla_risk_warnings,
     _js_number_string,
     _summarize_payment_controls,
     _sign_bid_authorization,
+    _sign_bid_payment_authorization,
     _sign_x402_payment,
 )
 
@@ -37,12 +39,14 @@ def test_bid_authorization_recovers_buyer_and_matches_js_strings():
         "signal-1",
         0.000001,
         {"round": {"round_id": "round-7", "closes_at": "2099-01-01T00:00:00.000Z"}},
+        "sha256:" + "ab" * 32,
     )
     message = {
         **{key: authorization[key] for key in (
             "bid_id", "pack_id", "signal_id", "buyer_payment_address",
             "buyer_signing_key", "buyer_encryption_pubkey", "delegation_id",
             "window_id", "nonce", "expiry",
+            "payment_authorization_fingerprint",
         )},
         "signal_scope": _canonical_json(authorization["signal_scope"]),
         "price": _js_number_string(authorization["price"]),
@@ -54,6 +58,101 @@ def test_bid_authorization_recovers_buyer_and_matches_js_strings():
     assert message["price"] == "0.000001"
     assert _js_number_string(1e-7) == "1e-7"
     assert _js_number_string(1e21) == "1e+21"
+
+
+def test_binding_bid_signs_exact_payment_terms_and_fingerprint(monkeypatch):
+    monkeypatch.setattr("time.time", lambda: 1_700_000_000)
+    buyer = Account.from_key(PRIVATE_KEY)
+    terms = {
+        "scheme": "exact",
+        "network": "eip155:84532",
+        "asset": BASE_SEPOLIA_USDC,
+        "pay_to": SELLER,
+        "token_domain": {"name": "USDC", "version": "2"},
+        "authorization_valid_before_min": "1700000900",
+        "authorization_valid_before_max": "1700001200",
+        "payment_trigger": "seller_delivery_ready",
+        "settlement_rule": "top_n_pay_as_bid",
+        "seller_delivery_sla_seconds": 900,
+    }
+    compact, fingerprint = _sign_bid_payment_authorization(
+        buyer, terms, 150000)
+    assert compact["authorization"]["from"].lower() == buyer.address.lower()
+    assert compact["authorization"]["to"].lower() == SELLER.lower()
+    assert compact["authorization"]["value"] == "150000"
+    assert compact["authorization"]["validBefore"] == "1700000900"
+    assert len(bytes.fromhex(compact["signature"][2:])) == 65
+    assert fingerprint.startswith("sha256:")
+    assert len(fingerprint) == len("sha256:") + 64
+
+
+def test_buyer_bid_submits_compact_payment_authorization_bound_to_bid(monkeypatch):
+    import accessura_sdk.client as client
+
+    calls = []
+    status = {
+        "round": {
+            "round_id": "round-binding-1",
+            "closes_at": "2099-01-01T00:00:00.000Z",
+        },
+        "payment_terms": {
+            "scheme": "exact",
+            "network": "eip155:84532",
+            "asset": BASE_SEPOLIA_USDC,
+            "pay_to": SELLER,
+            "token_domain": {"name": "USDC", "version": "2"},
+            "authorization_valid_before_min": "4070908800",
+            "authorization_valid_before_max": "4070909100",
+            "payment_trigger": "seller_delivery_ready",
+            "settlement_rule": "top_n_pay_as_bid",
+            "seller_delivery_sla_seconds": 86_400,
+        },
+    }
+
+    def fake_request(method, url, headers, json_body=None):
+        calls.append((method, url, json_body))
+        if method == "GET":
+            return status
+        return {"ok": True, "received": json_body}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    buyer = BuyerAgent(
+        PRIVATE_KEY,
+        base_url="https://market.example",
+        api_key="acc_test",
+    )
+    result = buyer.bid("pack-1", "signal-1", 0.15)
+    submitted = result["received"]
+    compact = submitted["payment_authorization"]
+    authorization = submitted["authorization"]
+    expected_fingerprint = "sha256:" + __import__("hashlib").sha256(
+        _canonical_json(compact).encode("utf-8")
+    ).hexdigest()
+    assert authorization["payment_authorization_fingerprint"] == expected_fingerprint
+    assert compact["authorization"]["value"] == "150000"
+    assert compact["authorization"]["to"].lower() == SELLER.lower()
+    assert result["payment_risk_warnings"] == [{
+        "code": "LONG_SELLER_DELIVERY_SLA",
+        "seller_delivery_sla_seconds": 86_400,
+        "warning_threshold_seconds": 3_600,
+        "message": result["payment_risk_warnings"][0]["message"],
+    }]
+    assert calls[-1][0] == "POST"
+    status_result = buyer.get_bid_status("pack-1", "signal-1")
+    assert status_result["payment_risk_warnings"][0]["code"] == (
+        "LONG_SELLER_DELIVERY_SLA")
+
+
+def test_binding_bid_long_sla_warning_is_informational_and_validated():
+    short_terms = {"seller_delivery_sla_seconds": 3_600}
+    long_terms = {"seller_delivery_sla_seconds": 3_601}
+    assert _binding_bid_sla_risk_warnings(short_terms) == []
+    warning = _binding_bid_sla_risk_warnings(long_terms)
+    assert warning[0]["code"] == "LONG_SELLER_DELIVERY_SLA"
+    assert warning[0]["seller_delivery_sla_seconds"] == 3_601
+    with pytest.raises(RuntimeError, match="30 to 86400"):
+        _binding_bid_sla_risk_warnings(
+            {"seller_delivery_sla_seconds": 86_401})
 
 
 def test_x402_header_is_exact_base_usdc_transfer_authorization(monkeypatch):
@@ -398,12 +497,13 @@ def test_seller_managed_encryption_requires_a_separate_delivery_secret():
     assert distinct._require_delivery_secret() == bytes.fromhex("ab" * 32)
 
 
-def test_mcp_public_surface_has_one_explicit_payment_action():
+def test_mcp_public_surface_places_payment_authority_at_binding_bid():
     root = Path(__file__).parent.parent
     source = (root / "server.py").read_text()
     wrapper = (root / "client_wrapper.py").read_text()
     sdk = (root / "accessura_sdk" / "client.py").read_text()
     assert '@safe("claims.pay")' in source
+    assert '@safe("bids.place")' in source
     assert '@safe("claims.receipt")' in source
     assert '@safe("auth.token")' in source
     assert '@safe("payments.readiness")' in source
@@ -411,6 +511,9 @@ def test_mcp_public_surface_has_one_explicit_payment_action():
     assert '@safe("seller.readiness_get")' in source
     assert '@safe("seller.readiness_update")' in source
     assert "confirm_real_payment" in source
+    assert "_sign_bid_payment_authorization" in wrapper
+    assert '"payment_authorization": payment_authorization' in wrapper
+    assert "payment_authorization_fingerprint" in sdk
     assert '@safe("wallet.balance")' not in source
     assert '@safe("wallet.deposit")' not in source
     assert '@safe("wallet.withdraw")' not in source
