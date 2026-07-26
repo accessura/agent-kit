@@ -128,6 +128,9 @@ Credentials are environment-only:
   standing grant. A winning authorization is submitted only after seller
   delivery. `claims_pay` is read-only for binding claims and retains an
   explicit-confirmation path only for pre-binding legacy claims.
+- `bids_status` and `bids_place` return a structured payment-risk warning when
+  the visible Seller delivery SLA exceeds one hour. Long SLAs remain allowed
+  up to 24 hours and require an informed Agent decision.
 
 The direct MCP surface intentionally has no platform `wallet`, `deposit`,
 `withdraw`, receipt-ack, relist, orders, or sales tool. Delist is terminal;

@@ -39,6 +39,8 @@ from accessura_sdk.client import (
     DEFAULT_X402_NETWORK,
     _assert_safe_auth_challenge,
     _base_payment_controls,
+    _attach_payment_risk_warnings,
+    _binding_bid_sla_risk_warnings,
     _enforce_payment_controls,
     _local_payment_controls,
     _payment_control_config,
@@ -304,7 +306,9 @@ async def place_bid(pack_id: str, bid_data: dict) -> dict:
                     "a caller-supplied BidAuthorization must include its "
                     "payment_authorization")
             status = await get_bid_status(pack_id, signal_id)
-            network = str((status.get("payment_terms") or {}).get("network", ""))
+            payment_terms = status.get("payment_terms")
+            network = str((payment_terms or {}).get("network", ""))
+            risk_warnings = _binding_bid_sla_risk_warnings(payment_terms)
             controls = await _load_payment_controls(network)
             _enforce_payment_controls(
                 amount_base_units=bid_amount,
@@ -312,11 +316,13 @@ async def place_bid(pack_id: str, bid_data: dict) -> dict:
                 controls=controls,
                 action="binding bid submission",
             )
-            return await _post(f"/packs/{_quote(pack_id)}/bid", bid_data)
+            response = await _post(f"/packs/{_quote(pack_id)}/bid", bid_data)
+            return _attach_payment_risk_warnings(response, risk_warnings)
         for attempt in range(2):
             status = await get_bid_status(pack_id, signal_id)
             payment_terms = status.get("payment_terms")
             network = str((payment_terms or {}).get("network", ""))
+            risk_warnings = _binding_bid_sla_risk_warnings(payment_terms)
             controls = await _load_payment_controls(network)
             _enforce_payment_controls(
                 amount_base_units=bid_amount,
@@ -354,7 +360,8 @@ async def place_bid(pack_id: str, bid_data: dict) -> dict:
                     "payment_authorization": payment_authorization,
                 })
             if code < 400:
-                return response
+                return _attach_payment_risk_warnings(
+                    response, risk_warnings)
             if (
                 response.get("error_code") != "BID_AUTHORIZATION_MISMATCH"
                 or attempt == 1
@@ -366,7 +373,12 @@ async def place_bid(pack_id: str, bid_data: dict) -> dict:
 
 async def get_bid_status(pack_id: str, signal_id: str = "") -> dict:
     params = {"signal_id": signal_id} if signal_id else None
-    return await _get(f"/packs/{_quote(pack_id)}/bid", params)
+    status = await _get(f"/packs/{_quote(pack_id)}/bid", params)
+    payment_terms = status.get("payment_terms")
+    if not isinstance(payment_terms, dict):
+        return status
+    return _attach_payment_risk_warnings(
+        status, _binding_bid_sla_risk_warnings(payment_terms))
 
 
 async def payment_readiness(network: str = DEFAULT_X402_NETWORK) -> dict:

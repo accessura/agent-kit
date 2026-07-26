@@ -506,7 +506,10 @@ async def bids_place(
     must be >= the pack's perCallPrice. This financially binding action signs
     both BidAuthorization and an exact EIP-3009 USDC authorization locally.
     The platform does not submit that payment at bid or clearing; if this bid
-    wins, seller delivery triggers direct Buyer-to-Seller submission.
+    wins, seller delivery triggers direct Buyer-to-Seller submission. The
+    result includes payment_risk_warnings when the frozen Seller delivery SLA
+    exceeds one hour; the warning is informational and does not reject a
+    knowingly accepted longer commitment.
 
     Args:
         pack_id: Target pack ID

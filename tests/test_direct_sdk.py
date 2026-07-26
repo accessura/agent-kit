@@ -16,6 +16,7 @@ from accessura_sdk.client import (
     SellerAgent,
     _canonical_json,
     _enforce_payment_controls,
+    _binding_bid_sla_risk_warnings,
     _js_number_string,
     _summarize_payment_controls,
     _sign_bid_authorization,
@@ -72,6 +73,7 @@ def test_binding_bid_signs_exact_payment_terms_and_fingerprint(monkeypatch):
         "authorization_valid_before_max": "1700001200",
         "payment_trigger": "seller_delivery_ready",
         "settlement_rule": "top_n_pay_as_bid",
+        "seller_delivery_sla_seconds": 900,
     }
     compact, fingerprint = _sign_bid_payment_authorization(
         buyer, terms, 150000)
@@ -103,6 +105,7 @@ def test_buyer_bid_submits_compact_payment_authorization_bound_to_bid(monkeypatc
             "authorization_valid_before_max": "4070909100",
             "payment_trigger": "seller_delivery_ready",
             "settlement_rule": "top_n_pay_as_bid",
+            "seller_delivery_sla_seconds": 86_400,
         },
     }
 
@@ -128,7 +131,28 @@ def test_buyer_bid_submits_compact_payment_authorization_bound_to_bid(monkeypatc
     assert authorization["payment_authorization_fingerprint"] == expected_fingerprint
     assert compact["authorization"]["value"] == "150000"
     assert compact["authorization"]["to"].lower() == SELLER.lower()
+    assert result["payment_risk_warnings"] == [{
+        "code": "LONG_SELLER_DELIVERY_SLA",
+        "seller_delivery_sla_seconds": 86_400,
+        "warning_threshold_seconds": 3_600,
+        "message": result["payment_risk_warnings"][0]["message"],
+    }]
     assert calls[-1][0] == "POST"
+    status_result = buyer.get_bid_status("pack-1", "signal-1")
+    assert status_result["payment_risk_warnings"][0]["code"] == (
+        "LONG_SELLER_DELIVERY_SLA")
+
+
+def test_binding_bid_long_sla_warning_is_informational_and_validated():
+    short_terms = {"seller_delivery_sla_seconds": 3_600}
+    long_terms = {"seller_delivery_sla_seconds": 3_601}
+    assert _binding_bid_sla_risk_warnings(short_terms) == []
+    warning = _binding_bid_sla_risk_warnings(long_terms)
+    assert warning[0]["code"] == "LONG_SELLER_DELIVERY_SLA"
+    assert warning[0]["seller_delivery_sla_seconds"] == 3_601
+    with pytest.raises(RuntimeError, match="30 to 86400"):
+        _binding_bid_sla_risk_warnings(
+            {"seller_delivery_sla_seconds": 86_401})
 
 
 def test_x402_header_is_exact_base_usdc_transfer_authorization(monkeypatch):

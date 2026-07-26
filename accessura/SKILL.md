@@ -87,6 +87,9 @@ The MCP server reads these environment variables (never pass keys as tool argume
    payTo/network/asset/SLA window, signs exact EIP-3009 and then a
    fingerprint-bound `BidAuthorization` with `ACCESSURA_PRIVATE_KEY`, and
    retries once on a round mismatch. Your `bid_price` is in decimal USDC.
+   `bids_status` and the accepted bid response include
+   `payment_risk_warnings` when the visible Seller SLA exceeds one hour. This
+   warning does not block a knowingly accepted longer commitment.
 5. Use `bids_status` to check `round.closes_at`. After it elapses, call `claims_settle`. Settlement is idempotent — safe to call multiple times.
 6. After an MCP restart, call `auth_token` to refresh the Bearer session without
    issuing another API key. Then call `claims_list`. An award begins in
@@ -145,6 +148,9 @@ analytics only and never consumes future-round capacity.
   asset must be configured Base USDC, and `pay_to` must be the frozen Seller
   payout wallet.
 - Verify the authorization validity window covers the published seller SLA.
+  The SLA itself may be as long as 86400 seconds; the Kit warns above 3600
+  seconds because that bid amount may remain committed in active exposure
+  until Seller delivery or deadline.
 - All amounts are in USDC base units (1 USDC = 1,000,000).
 - Keep the offer below `ACCESSURA_MAX_PAY_USDC`; Sepolia defaults to `100`
   USDC, while mainnet requires an explicit value.

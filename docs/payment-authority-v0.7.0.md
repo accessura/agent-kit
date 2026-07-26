@@ -58,6 +58,11 @@ a configured cumulative budget refuses both bid and payment signing.
 
 - `bids_place` reads the current round's frozen payTo, network, asset, token
   domain, seller SLA, and permitted `validBefore` interval.
+- The Seller SLA remains configurable through 86400 seconds. Both
+  `bids_status` and the accepted bid result add a structured
+  `LONG_SELLER_DELIVERY_SLA` warning above 3600 seconds; it informs the Agent
+  before/at the signing checkpoint without silently changing or rejecting the
+  Seller's published terms.
 - Inside one process lock, the kit reads budget facts once, checks the bid
   against the per-payment ceiling and remaining cumulative authority, and
   signs exact EIP-3009 `TransferWithAuthorization`.
@@ -66,6 +71,9 @@ a configured cumulative budget refuses both bid and payment signing.
 - The bid is financially binding for that round. Clearing does not submit the
   transfer; seller delivery of the durable buyer-specific envelope does.
 - Non-winners are terminal and their authorizations are never submitted.
+- A durable Seller delivery followed by final Buyer payment failure does not
+  strike or pause the Seller. The Seller is still unpaid and receives no
+  replacement Buyer because binding rounds do not promote.
 - `claims_pay` becomes a status read for binding claims. Its explicit payment
   confirmation survives only as compatibility recovery for older 402 claims.
 - Network/asset/domain validation and the mainnet gate remain independent

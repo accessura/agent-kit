@@ -510,6 +510,7 @@ def test_mcp_bid_and_payment_fail_closed_when_budget_facts_are_unknown(monkeypat
                 "authorization_valid_before_max": "4070909100",
                 "payment_trigger": "seller_delivery_ready",
                 "settlement_rule": "top_n_pay_as_bid",
+                "seller_delivery_sla_seconds": 900,
             },
         }),
     )

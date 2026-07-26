@@ -37,8 +37,11 @@ round-frozen payTo/network/asset/SLA window, and signs an exact EIP-3009
 authorization plus a fingerprint-bound `BidAuthorization`. A bid does not
 reserve or move funds, but it is irrevocable for that round: if it wins, seller
 delivery triggers direct Buyer-to-Seller submission. Non-winner authorizations
-are never submitted. `pay_claim()` remains only as compatibility recovery for
-pre-binding claims that still return a 402 challenge.
+are never submitted. `get_bid_status()` and `bid()` add
+`payment_risk_warnings` when the visible Seller SLA exceeds one hour; the
+warning is informational and long SLAs remain allowed through 24 hours.
+`pay_claim()` remains only as compatibility recovery for pre-binding claims
+that still return a 402 challenge.
 
 Give the agent a dedicated wallet funded only with the Buyer principal's
 intended loss ceiling. The kit's `ACCESSURA_MAX_PAY_USDC` and finite

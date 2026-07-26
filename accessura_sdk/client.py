@@ -129,6 +129,7 @@ X402_CHAIN_PROFILES = {
         "testnet": False,
     },
 }
+LONG_SELLER_DELIVERY_SLA_WARNING_SECONDS = 3_600
 
 BID_AUTHORIZATION_TYPES = {
     "BidAuthorization": [
@@ -668,6 +669,7 @@ def _sign_bid_payment_authorization(
 
     if not isinstance(payment_terms, dict):
         raise RuntimeError("bid status did not return payment_terms")
+    _binding_bid_sla_risk_warnings(payment_terms)
     network = str(payment_terms.get("network", ""))
     profile = X402_CHAIN_PROFILES.get(network)
     if profile is None:
@@ -743,6 +745,54 @@ def _sign_bid_payment_authorization(
         _canonical_json(compact).encode("utf-8")
     ).hexdigest()
     return compact, fingerprint
+
+
+def _binding_bid_sla_risk_warnings(payment_terms: dict) -> list[dict]:
+    """Validate the frozen Seller SLA and surface long commitment risk."""
+    if not isinstance(payment_terms, dict):
+        raise RuntimeError("bid status did not return payment_terms")
+    raw_sla = payment_terms.get("seller_delivery_sla_seconds")
+    if isinstance(raw_sla, bool):
+        raise RuntimeError("binding-bid Seller delivery SLA must be an integer")
+    try:
+        sla_seconds = int(raw_sla)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "binding-bid payment terms are missing seller_delivery_sla_seconds"
+        ) from exc
+    if str(sla_seconds) != str(raw_sla) or not 30 <= sla_seconds <= 86_400:
+        raise RuntimeError(
+            "binding-bid Seller delivery SLA must be an integer from 30 to 86400 seconds"
+        )
+    if sla_seconds <= LONG_SELLER_DELIVERY_SLA_WARNING_SECONDS:
+        return []
+    return [{
+        "code": "LONG_SELLER_DELIVERY_SLA",
+        "seller_delivery_sla_seconds": sla_seconds,
+        "warning_threshold_seconds":
+            LONG_SELLER_DELIVERY_SLA_WARNING_SECONDS,
+        "message": (
+            f"Seller delivery SLA is {sla_seconds} seconds. If this bid wins, "
+            "the bid amount may remain committed in active exposure until "
+            "Seller delivery or the deadline. This SLA was exposed in "
+            "payment_terms before signing; proceed only if the duration is "
+            "acceptable."
+        ),
+    }]
+
+
+def _attach_payment_risk_warnings(
+        response: dict, risk_warnings: list[dict]) -> dict:
+    if not risk_warnings:
+        return response
+    attached = dict(response)
+    existing = attached.get("payment_risk_warnings")
+    attached["payment_risk_warnings"] = (
+        [*existing, *risk_warnings]
+        if isinstance(existing, list)
+        else risk_warnings
+    )
+    return attached
 
 
 def _sign_x402_payment(account, payment_required: dict, *,
@@ -1149,6 +1199,7 @@ class BuyerAgent:
                 status = self.get_bid_status(pack_id, signal_id)
                 payment_terms = status.get("payment_terms")
                 network = str((payment_terms or {}).get("network", ""))
+                risk_warnings = _binding_bid_sla_risk_warnings(payment_terms)
                 controls = _load_payment_controls_sync(
                     api=self.api, headers=self._auth(), network=network)
                 payment_authorization, payment_fingerprint = (
@@ -1173,6 +1224,8 @@ class BuyerAgent:
                     {"bid_price": price, "signal_id": signal_id,
                      "authorization": authorization,
                      "payment_authorization": payment_authorization})
+                response = _attach_payment_risk_warnings(
+                    response, risk_warnings)
                 if (
                     response.get("error_code") != "BID_AUTHORIZATION_MISMATCH"
                     or attempt == 1
@@ -1185,9 +1238,14 @@ class BuyerAgent:
         params = ""
         if signal_id:
             params = f"?signal_id={urllib.parse.quote(signal_id)}"
-        return _request(
+        status = _request(
             "GET", f"{self.api}/packs/{pack_id}/bid{params}",
             self._auth())
+        payment_terms = status.get("payment_terms")
+        if not isinstance(payment_terms, dict):
+            return status
+        return _attach_payment_risk_warnings(
+            status, _binding_bid_sla_risk_warnings(payment_terms))
 
     def settle(self, pack_id: str, signal_id: str = "") -> dict:
         return _request(

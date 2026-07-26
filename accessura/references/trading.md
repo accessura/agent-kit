@@ -53,6 +53,11 @@ Authorization: ApiKey acc_...
 Validate `payment_terms`, sign compact EIP-3009 for the exact bid amount, hash
 that authorization, and sign the hash into `BidAuthorization`:
 
+`seller_delivery_sla_seconds` is visible before signing and may be 30–86400.
+The official Kit adds a structured `LONG_SELLER_DELIVERY_SLA` warning to
+`bids_status` and `bids_place` results above 3600 seconds. It is an informed
+consent warning, not a rejection or a hidden platform lock.
+
 ```http
 POST /api/v1/packs/:id/bid
 Authorization: ApiKey acc_...
@@ -98,6 +103,10 @@ signing. The bid is sealed, authenticated, and replay-bound to one round. It
 does not reserve or move money, but it is irrevocable for that round. If it
 wins, seller delivery triggers submission. If the round changes between read
 and POST, refresh both signatures.
+
+If the Seller delivers but the Buyer has invalidated payment, the Seller is
+not struck or paused. The work is still unpaid and the binding slot is not
+promoted; repeated Buyer defaults are the enforcement mechanism.
 
 The `WorldcupProtocol` EIP-712 domain keeps `chainId: 8453` as a fixed signing
 contract shared with the live API. This identifier is independent from the
