@@ -63,18 +63,26 @@ The FastMCP server exposes an exact 25-tool surface, including `auth_token`,
 `seller_signal_reopen`.
 
 ```bash
-python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.7.0"
+python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.8.0"
 claude mcp add accessura -- accessura-mcp
 ```
 
-`v0.7.0` adds principal-configured finite payment authority and read-only
-platform payment/exposure facts without adding a platform budget ledger. The
-binding-bid update moves the EIP-3009 signing checkpoint into `bids_place`:
-seller delivery, not clearing, triggers submission. The install reference becomes available
-only after the reviewed release is tagged; this development PR does not create
-or move a tag. The immutable version tag makes the installation reproducible and installs both the
-`accessura_sdk` Python package and the `accessura-mcp` console command. To
-upgrade, replace `v0.7.0` with a newer published tag and add `--upgrade` to the
+`v0.8.0` makes a bid a binding payment commitment. The EIP-3009 signing
+checkpoint moves into `bids_place`, and **seller delivery — not clearing —
+triggers submission**, so a buyer still parts with no funds until the envelope
+is durably stored. Losing bids are terminal: their authorization is released
+unused and its signature erased. `claims_pay` becomes a read-only status query
+for binding claims. Because the seller delivery SLA is visible before signing
+and may be as long as 24 hours, the kit attaches a structured
+`LONG_SELLER_DELIVERY_SLA` warning above one hour — informed consent, not a
+rejection.
+
+Carried forward from `v0.7.0`: principal-configured finite payment authority and
+read-only platform payment/exposure facts, with no platform budget ledger.
+
+The immutable version tag makes the installation reproducible and installs both
+the `accessura_sdk` Python package and the `accessura-mcp` console command. To
+upgrade, replace `v0.8.0` with a newer published tag and add `--upgrade` to the
 same `pip install` command. To uninstall, run
 `python -m pip uninstall accessura-agent-kit`.
 

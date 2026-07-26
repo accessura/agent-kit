@@ -591,12 +591,12 @@ def test_checked_in_exact_manifest_and_sha256_match_the_shared_contract():
     manifest_path = (
         Path(__file__).resolve().parents[1]
         / "docs"
-        / "exact-mcp-tool-manifest-v0.7.0.json"
+        / "exact-mcp-tool-manifest-v0.8.0.json"
     )
     raw = manifest_path.read_bytes()
     manifest = json.loads(raw)
 
-    assert manifest["manifest_version"] == "0.7.0"
+    assert manifest["manifest_version"] == "0.8.0"
     assert manifest["tools"] == sorted(EXPECTED_MCP_TOOLS)
     assert len(manifest["tools"]) == len(set(manifest["tools"])) == 25
     payment_schema = manifest["output_schemas"]["payments_readiness"]
@@ -822,13 +822,13 @@ def test_kit_keeps_all_five_stable_version_pins():
     from pathlib import Path
 
     root = Path(__file__).parent.parent
-    assert 'version = "0.7.0"' in (root / "pyproject.toml").read_text()
-    assert 'version = "0.7.0"' in (
+    assert 'version = "0.8.0"' in (root / "pyproject.toml").read_text()
+    assert 'version = "0.8.0"' in (
         root / "accessura_sdk" / "pyproject.toml"
     ).read_text()
-    assert (root / "accessura" / "VERSION").read_text().strip() == "0.7.0"
-    assert "@v0.7.0" in (root / "README.md").read_text()
-    assert "@v0.7.0" in (root / "server.py").read_text()
+    assert (root / "accessura" / "VERSION").read_text().strip() == "0.8.0"
+    assert "@v0.8.0" in (root / "README.md").read_text()
+    assert "@v0.8.0" in (root / "server.py").read_text()
 
 
 def test_broken_repo_external_javascript_examples_are_removed():
@@ -1044,7 +1044,7 @@ def test_ci_paths_cover_expanded_skill_and_funded_gates():
     assert '"accessura_sdk/pyproject.toml"' in skill_workflow
     assert '"examples/**"' in skill_workflow
     assert '"scripts/verify_funded_testnet_evidence.py"' in package_workflow
-    assert '"docs/exact-mcp-tool-manifest-v0.7.0.json"' in package_workflow
+    assert '"docs/exact-mcp-tool-manifest-v0.8.0.json"' in package_workflow
 
 
 def test_sdk_publish_rejects_unknown_info_type_before_network(monkeypatch):

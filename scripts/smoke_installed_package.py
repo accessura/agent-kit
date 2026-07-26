@@ -19,7 +19,7 @@ async def tool_names() -> set[str]:
 
 def main() -> None:
     version = importlib.metadata.version("accessura-agent-kit")
-    if version != "0.7.0":
+    if version != "0.8.0":
         raise SystemExit(f"unexpected installed version: {version}")
     names = asyncio.run(tool_names())
     if names != EXPECTED_MCP_TOOLS:
