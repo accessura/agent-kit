@@ -426,6 +426,81 @@ def test_claims_pay_false_returns_live_preview_without_payment(monkeypatch):
     assert fake.paid is False
 
 
+def test_payments_readiness_exposes_nested_payment_controls(monkeypatch):
+    class FakeClient:
+        async def payment_readiness(self, network):
+            return {
+                "signing_ready": True,
+                "network": network,
+                "payment_controls": {
+                    "budget_status": "ready",
+                    "per_payment_limit_base_units": "1000000",
+                    "budget_limit_base_units": "10000000",
+                    "spent_base_units": "2000000",
+                    "active_exposure_base_units": "3000000",
+                    "remaining_base_units": "5000000",
+                },
+            }
+
+    monkeypatch.setattr(server, "_require_auth", lambda: None)
+    monkeypatch.setattr(server, "_get_client", lambda: FakeClient())
+    result = json.loads(asyncio.run(
+        server.payments_readiness.__wrapped__("eip155:84532")
+    ))
+
+    assert result["network"] == "eip155:84532"
+    assert result["payment_controls"]["budget_status"] == "ready"
+    assert result["payment_controls"]["remaining_base_units"] == "5000000"
+
+
+def test_mcp_bid_and_payment_fail_closed_when_budget_facts_are_unknown(monkeypatch):
+    async def unknown_controls(_network):
+        return {
+            "budget_status": "unknown",
+            "unknown_reason": "payment history endpoint not deployed",
+            "remaining_base_units": None,
+        }
+
+    async def no_network(*_args, **_kwargs):
+        raise AssertionError("over-limit authorization reached submission")
+
+    monkeypatch.setenv("ACCESSURA_BUDGET_USDC", "10")
+    monkeypatch.setenv("ACCESSURA_BUDGET_START_AT", "2000-01-01T00:00:00Z")
+    monkeypatch.setenv("ACCESSURA_BUDGET_EXPIRES_AT", "2099-01-01T00:00:00Z")
+    monkeypatch.setattr(client_wrapper, "_load_payment_controls", unknown_controls)
+    monkeypatch.setattr(client_wrapper, "_post", no_network)
+
+    with pytest.raises(RuntimeError, match="budget_status is 'unknown'"):
+        asyncio.run(client_wrapper.place_bid(
+            "pack-1", {"bid_price": 1, "signal_id": "signal-1"}))
+
+    calls = []
+
+    async def payment_response(method, path, **_kwargs):
+        calls.append((method, path))
+        if method == "GET":
+            return 402, {}, {
+                "x402Version": 2,
+                "resource": {"url": "https://api.example/claim-1"},
+                "accepts": [{
+                    "scheme": "exact",
+                    "network": "eip155:84532",
+                    "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                    "amount": "1000000",
+                    "payTo": "0x" + "22" * 20,
+                    "maxTimeoutSeconds": 60,
+                    "extra": {"name": "USDC", "version": "2"},
+                }],
+            }
+        raise AssertionError("unknown budget reached payment submission")
+
+    monkeypatch.setattr(client_wrapper, "_req_response", payment_response)
+    monkeypatch.setattr(client_wrapper, "PRIVATE_KEY", "0x" + "11" * 32)
+    with pytest.raises(RuntimeError, match="budget_status is 'unknown'"):
+        asyncio.run(client_wrapper.pay_claim("claim-1"))
+    assert calls == [("GET", "/claims/claim-1/pay")]
+
+
 def test_claims_receipt_uses_direct_transaction_receipt(monkeypatch):
     class FakeClient:
         async def get_transaction_receipt(self, claim_id):
@@ -471,13 +546,26 @@ def test_checked_in_exact_manifest_and_sha256_match_the_shared_contract():
     manifest_path = (
         Path(__file__).resolve().parents[1]
         / "docs"
-        / "exact-mcp-tool-manifest-v0.6.1.json"
+        / "exact-mcp-tool-manifest-v0.7.0.json"
     )
     raw = manifest_path.read_bytes()
     manifest = json.loads(raw)
 
-    assert manifest == sorted(EXPECTED_MCP_TOOLS)
-    assert len(manifest) == len(set(manifest)) == 25
+    assert manifest["manifest_version"] == "0.7.0"
+    assert manifest["tools"] == sorted(EXPECTED_MCP_TOOLS)
+    assert len(manifest["tools"]) == len(set(manifest["tools"])) == 25
+    payment_schema = manifest["output_schemas"]["payments_readiness"]
+    assert "payment_controls" in payment_schema["required"]
+    controls_schema = payment_schema["properties"]["payment_controls"]
+    assert {
+        "per_payment_limit_base_units",
+        "budget_limit_base_units",
+        "spent_base_units",
+        "active_exposure_base_units",
+        "remaining_base_units",
+        "budget_status",
+    } <= set(controls_schema["required"])
+    assert "unknown" in controls_schema["properties"]["budget_status"]["enum"]
     assert hashlib.sha256(raw).hexdigest() == EXPECTED_MCP_MANIFEST_SHA256
 
 
@@ -689,13 +777,13 @@ def test_kit_keeps_all_five_stable_version_pins():
     from pathlib import Path
 
     root = Path(__file__).parent.parent
-    assert 'version = "0.6.1"' in (root / "pyproject.toml").read_text()
-    assert 'version = "0.6.1"' in (
+    assert 'version = "0.7.0"' in (root / "pyproject.toml").read_text()
+    assert 'version = "0.7.0"' in (
         root / "accessura_sdk" / "pyproject.toml"
     ).read_text()
-    assert (root / "accessura" / "VERSION").read_text().strip() == "0.6.1"
-    assert "@v0.6.1" in (root / "README.md").read_text()
-    assert "@v0.6.1" in (root / "server.py").read_text()
+    assert (root / "accessura" / "VERSION").read_text().strip() == "0.7.0"
+    assert "@v0.7.0" in (root / "README.md").read_text()
+    assert "@v0.7.0" in (root / "server.py").read_text()
 
 
 def test_broken_repo_external_javascript_examples_are_removed():
@@ -911,7 +999,7 @@ def test_ci_paths_cover_expanded_skill_and_funded_gates():
     assert '"accessura_sdk/pyproject.toml"' in skill_workflow
     assert '"examples/**"' in skill_workflow
     assert '"scripts/verify_funded_testnet_evidence.py"' in package_workflow
-    assert '"docs/exact-mcp-tool-manifest-v0.6.1.json"' in package_workflow
+    assert '"docs/exact-mcp-tool-manifest-v0.7.0.json"' in package_workflow
 
 
 def test_sdk_publish_rejects_unknown_info_type_before_network(monkeypatch):

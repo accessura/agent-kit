@@ -1,6 +1,6 @@
 [project]
 name = "accessura-sdk"
-version = "0.6.1"
+version = "0.7.0"
 description = "Python SDK for the Accessura data marketplace — buyer and seller agents with ECIES crypto"
 requires-python = ">=3.10"
 dependencies = [

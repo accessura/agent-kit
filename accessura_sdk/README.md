@@ -14,6 +14,8 @@ buyer.register("My Trading Agent")
 buyer.get_api_key()
 
 packs = buyer.search("election", info_type="structured")
+controls = buyer.payment_readiness()["payment_controls"]
+assert controls["budget_status"] in ("unconfigured", "ready")
 bid = buyer.bid(packs[0]["id"], packs[0]["signals"][0]["id"], 0.15)
 buyer.settle(packs[0]["id"], packs[0]["signals"][0]["id"])
 
@@ -38,7 +40,20 @@ plaintext = buyer.decrypt_paid_claim(claim_id)
 receipt = buyer.get_transaction_receipt(claim_id)
 ```
 
-`bid()` signs the current round’s `BidAuthorization` locally and retries once if the round turns over between status read and submission. A bid does not reserve funds. `pay_claim()` is the only SDK step above that moves funds. Bind it to the prior preview with `expected_amount` and `expected_pay_to`; the signer also enforces `ACCESSURA_MAX_PAY_USDC` (default `100`) and refuses mainnet unless `ACCESSURA_ALLOW_MAINNET=1`.
+`bid()` checks the per-payment ceiling and cumulative authority before signing
+the current round’s `BidAuthorization`, then retries once if the round turns
+over between status read and submission. A bid does not reserve funds.
+`pay_claim()` is the only SDK step above that moves funds and re-checks the same
+authority immediately before its EIP-3009 signature. Bind it to the prior
+preview with `expected_amount` and `expected_pay_to`.
+
+Give the agent a dedicated wallet funded only with the Buyer principal's
+intended loss ceiling. The kit's `ACCESSURA_MAX_PAY_USDC` and finite
+`ACCESSURA_BUDGET_USDC`/`ACCESSURA_BUDGET_START_AT`/
+`ACCESSURA_BUDGET_EXPIRES_AT` grant defend against official-path injection and
+operator error, not key theft. Mainnet has no limit defaults and fails closed
+unless both limits and the finite interval are explicit. The budget has no
+automatic daily/weekly reset.
 
 `GET /claims` is Bearer-only. `get_api_key()` stores the API key and immediate
 JWT. On restart, restore the saved API key in the constructor and call
@@ -82,7 +97,15 @@ history routes.
 
 When a buyer wins, call `deliver_key_release(..., buyer_agent_id=claim["buyer_agent_id"], ciphertext_url="https://...")`. The SDK derives the claim/Buyer wrap binding and locally opens the exact ciphertext with the per-signal DEK before wrapping it to that buyer’s encryption key; it never uploads plaintext or the raw DEK. Do not manually pass `aad` or `wrap_aad` in this pre-encrypted mode.
 
-The payment signer accepts the exact Base Sepolia test-USDC challenge during local/Testnet proving and the exact Base mainnet USDC challenge after promotion. `payment_readiness()` defaults to Base Sepolia and replaces the removed platform balance/deposit/withdraw helpers.
+The payment signer accepts the exact Base Sepolia test-USDC challenge during
+local/Testnet proving and the exact Base mainnet USDC challenge after promotion.
+`payment_readiness()` defaults to Base Sepolia and returns a nested
+`payment_controls` snapshot derived from paginated platform payment history and
+active exposure. When the API capability is absent or history completeness
+cannot be established, a configured budget reports `budget_status="unknown"`
+and signing fails closed rather than assuming zero spend. The kit serializes
+read/sign/submit within one process; separate processes sharing a wallet can
+still race because the kit intentionally has no local or platform budget ledger.
 
 The protocol signing domain’s `chainId: 8453` is a fixed EIP-712 verification
 constant and is independent from the Active Testnet x402 network
