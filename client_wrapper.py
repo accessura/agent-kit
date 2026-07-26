@@ -17,8 +17,10 @@ Credentials come from environment variables only — never from tool arguments:
                            seller-side per-signal DEK derivation.
 """
 
+import asyncio
 import json
 import os
+import weakref
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -35,10 +37,20 @@ from accessura_sdk.crypto import (
 )
 from accessura_sdk.client import (
     DEFAULT_X402_NETWORK,
+    _active_payment_network,
     _assert_safe_auth_challenge,
+    _base_payment_controls,
+    _enforce_payment_controls,
+    _local_payment_controls,
+    _payment_control_config,
     _payment_readiness,
+    _public_payment_controls,
     _sign_bid_authorization,
     _sign_x402_payment,
+    _summarize_payment_controls,
+    _unknown_payment_controls,
+    _usdc_price_base_units,
+    _validate_fact_page,
 )
 
 BASE_URL = os.getenv("ACCESSURA_BASE_URL", "https://testnet.accessura.io").rstrip("/")
@@ -46,6 +58,16 @@ API_KEY = os.getenv("ACCESSURA_API_KEY", "")
 TOKEN = os.getenv("ACCESSURA_TOKEN", "")
 PRIVATE_KEY = os.getenv("ACCESSURA_PRIVATE_KEY", "")
 DELIVERY_SECRET = os.getenv("ACCESSURA_DELIVERY_SECRET", "")
+_PAYMENT_AUTHORITY_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _payment_authority_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _PAYMENT_AUTHORITY_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _PAYMENT_AUTHORITY_LOCKS[loop] = lock
+    return lock
 
 
 # ── Credentials ───────────────────────────────────────────────────────────
@@ -134,7 +156,7 @@ async def _req_response(method: str, path: str, *, params: Optional[dict] = None
                         extra_headers: Optional[dict] = None) -> tuple[int, dict, dict[str, Any]]:
     """Protocol-aware HTTP response, retaining x402 402 status and headers."""
     url = f"{BASE_URL}/api/v1{path}"
-    headers = {"User-Agent": "Accessura-MCP/0.6", **_auth_headers(), **(extra_headers or {})}
+    headers = {"User-Agent": "Accessura-MCP/0.7", **_auth_headers(), **(extra_headers or {})}
     if body is not None:
         headers["Content-Type"] = "application/json"
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -219,26 +241,98 @@ async def append_signal(pack_id: str, signal_data: dict) -> dict:
 
 # ── Bidding ───────────────────────────────────────────────────────────────
 
+async def _collect_financial_pages(
+    view: str,
+    *,
+    budget_start_at: Optional[str] = None,
+) -> list[dict]:
+    pages: list[dict] = []
+    cursor: Optional[str] = None
+    seen_cursors: set[str] = set()
+    for _ in range(1_000):
+        params: dict[str, Any] = {"view": view, "limit": 200}
+        if budget_start_at:
+            params["from"] = budget_start_at
+        if cursor:
+            params["cursor"] = cursor
+        status, _, page = await _req_response(
+            "GET", "/transactions", params=params)
+        if status >= 400:
+            raise RuntimeError(
+                f"financial facts API unavailable: HTTP {status} {page}")
+        _validate_fact_page(page, view)
+        pages.append(page)
+        if not page["has_more"]:
+            return pages
+        next_cursor = page["next_cursor"]
+        if next_cursor in seen_cursors:
+            raise RuntimeError("financial facts pagination repeated a cursor")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    raise RuntimeError("financial facts pagination exceeded 1000 pages")
+
+
+async def _load_payment_controls(network: str) -> dict:
+    try:
+        config = _payment_control_config(network)
+    except RuntimeError:
+        return _local_payment_controls(network)
+    controls = _base_payment_controls(config)
+    if not config["budget_configured"]:
+        return controls
+    if config["configured_status"] in ("not_started", "expired"):
+        return controls
+    try:
+        payments = await _collect_financial_pages(
+            "payments", budget_start_at=config["budget_start_at"])
+        exposure = await _collect_financial_pages("active_exposure")
+        return _summarize_payment_controls(network, payments, exposure)
+    except Exception as exc:
+        return _unknown_payment_controls(config, str(exc))
+
+
 async def place_bid(pack_id: str, bid_data: dict) -> dict:
-    if bid_data.get("authorization"):
-        return await _post(f"/packs/{_quote(pack_id)}/bid", bid_data)
     signal_id = str(bid_data.get("signal_id") or "")
     price = float(bid_data.get("bid_price"))
     if not signal_id:
         raise RuntimeError("signal_id is required for a direct signed bid")
-    from accessura_sdk.client import BuyerAgent
-    agent = BuyerAgent(private_key=_require_private_key(), base_url=BASE_URL)
-    for attempt in range(2):
-        status = await get_bid_status(pack_id, signal_id)
-        authorization = _sign_bid_authorization(
-            _account(), agent._enc_pub, pack_id, signal_id, price, status)
-        code, _, response = await _req_response(
-            "POST", f"/packs/{_quote(pack_id)}/bid",
-            body={**bid_data, "authorization": authorization})
-        if code < 400:
-            return response
-        if response.get("error_code") != "BID_AUTHORIZATION_MISMATCH" or attempt == 1:
-            raise RuntimeError(f"HTTP {code} POST /packs/{pack_id}/bid: {response}")
+    network = _active_payment_network()
+    bid_amount = _usdc_price_base_units(price)
+    async with _payment_authority_lock():
+        controls = await _load_payment_controls(network)
+        _enforce_payment_controls(
+            amount_base_units=bid_amount,
+            network=network,
+            controls=controls,
+            action="bid",
+        )
+        if bid_data.get("authorization"):
+            return await _post(f"/packs/{_quote(pack_id)}/bid", bid_data)
+        from accessura_sdk.client import BuyerAgent
+        agent = BuyerAgent(private_key=_require_private_key(), base_url=BASE_URL)
+        for attempt in range(2):
+            status = await get_bid_status(pack_id, signal_id)
+            if attempt:
+                controls = await _load_payment_controls(network)
+                _enforce_payment_controls(
+                    amount_base_units=bid_amount,
+                    network=network,
+                    controls=controls,
+                    action="bid",
+                )
+            authorization = _sign_bid_authorization(
+                _account(), agent._enc_pub, pack_id, signal_id, price, status)
+            code, _, response = await _req_response(
+                "POST", f"/packs/{_quote(pack_id)}/bid",
+                body={**bid_data, "authorization": authorization})
+            if code < 400:
+                return response
+            if (
+                response.get("error_code") != "BID_AUTHORIZATION_MISMATCH"
+                or attempt == 1
+            ):
+                raise RuntimeError(
+                    f"HTTP {code} POST /packs/{pack_id}/bid: {response}")
     raise RuntimeError("unreachable bid retry state")
 
 
@@ -247,9 +341,14 @@ async def get_bid_status(pack_id: str, signal_id: str = "") -> dict:
     return await _get(f"/packs/{_quote(pack_id)}/bid", params)
 
 
-def payment_readiness(network: str = DEFAULT_X402_NETWORK) -> dict:
-    """Local self-custody chain/USDC readiness; never a platform balance."""
-    return _payment_readiness(_account(), network)
+async def payment_readiness(network: str = DEFAULT_X402_NETWORK) -> dict:
+    """Signing configuration plus platform payment/exposure facts."""
+    readiness = _payment_readiness(_account(), network)
+    controls = await _load_payment_controls(network)
+    readiness["payment_controls"] = _public_payment_controls(controls)
+    readiness["signing_ready"] = controls["budget_status"] in (
+        "unconfigured", "ready")
+    return readiness
 
 
 # ── Claims & Settlement ──────────────────────────────────────────────────
@@ -283,21 +382,36 @@ async def pay_claim(claim_id: str, expected_amount: Optional[str] = None,
     expected_amount / expected_pay_to (read from a prior read-only preview) bind
     the signature to the previewed terms; the signer refuses if they changed.
     """
-    status, _, required = await _req_response(
-        "GET", f"/claims/{_quote(claim_id)}/pay")
-    if status in (200, 202):
-        return {**required, "_http_status": status}
-    if status != 402:
-        raise RuntimeError(f"HTTP {status} GET /claims/{claim_id}/pay: {required}")
-    _, payment_header = _sign_x402_payment(
-        _account(), required,
-        expected_amount=expected_amount, expected_pay_to=expected_pay_to)
-    paid_status, _, paid = await _req_response(
-        "POST", f"/claims/{_quote(claim_id)}/pay", body={},
-        extra_headers={"PAYMENT-SIGNATURE": payment_header})
-    if paid_status >= 400:
-        raise RuntimeError(f"HTTP {paid_status} POST /claims/{claim_id}/pay: {paid}")
-    return {**paid, "_http_status": paid_status}
+    async with _payment_authority_lock():
+        status, _, required = await _req_response(
+            "GET", f"/claims/{_quote(claim_id)}/pay")
+        if status in (200, 202):
+            return {**required, "_http_status": status}
+        if status != 402:
+            raise RuntimeError(
+                f"HTTP {status} GET /claims/{claim_id}/pay: {required}")
+        accepts = required.get("accepts")
+        network = (
+            str(accepts[0].get("network", ""))
+            if isinstance(accepts, list) and accepts
+            and isinstance(accepts[0], dict)
+            else ""
+        )
+        controls = await _load_payment_controls(network)
+        _, payment_header = _sign_x402_payment(
+            _account(), required,
+            expected_amount=expected_amount,
+            expected_pay_to=expected_pay_to,
+            payment_controls=controls,
+            claim_id=claim_id,
+        )
+        paid_status, _, paid = await _req_response(
+            "POST", f"/claims/{_quote(claim_id)}/pay", body={},
+            extra_headers={"PAYMENT-SIGNATURE": payment_header})
+        if paid_status >= 400:
+            raise RuntimeError(
+                f"HTTP {paid_status} POST /claims/{claim_id}/pay: {paid}")
+        return {**paid, "_http_status": paid_status}
 
 
 async def fetch_paid_ciphertext(ciphertext_url: str) -> dict:
@@ -311,7 +425,7 @@ async def fetch_paid_ciphertext(ciphertext_url: str) -> dict:
             response = await client.get(
                 ciphertext_url,
                 # Seller hosts receive no Accessura API key/JWT.
-                headers={"User-Agent": "Accessura-MCP/0.6"},
+                headers={"User-Agent": "Accessura-MCP/0.7"},
             )
         if response.status_code >= 400:
             raise RuntimeError(f"HTTP {response.status_code} ciphertext fetch: {response.text[:300]}")

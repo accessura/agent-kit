@@ -2,7 +2,7 @@
 """Accessura MCP Server — buyer + seller tools for the direct x402 API surface.
 
 Usage:
-    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.6.1"
+    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.7.0"
     ACCESSURA_API_KEY=acc_... accessura-mcp              # stdio (Claude Code)
     ACCESSURA_API_KEY=acc_... accessura-mcp --http 3000  # HTTP transport
 
@@ -475,14 +475,20 @@ async def signals_append(
 @mcp.tool()
 @safe("payments.readiness")
 async def payments_readiness(network: str = "eip155:84532") -> str:
-    """Inspect local self-custody payment readiness without a platform balance.
+    """Inspect signing readiness and the principal's configured payment controls.
+
+    The nested payment_controls object reports the per-payment ceiling, finite
+    absolute budget, platform-observed spend and active exposure, remaining
+    authority, completeness boundary, and budget_status. If the payment-history
+    API is not deployed or cannot prove completeness, budget_status is unknown
+    and cumulative-budget bid/payment signing fails closed.
 
     Args:
         network: eip155:84532 for Base Sepolia proving, or eip155:8453 only
             after the deployment has been promoted to Base mainnet
     """
     _require_auth()
-    data = _get_client().payment_readiness(network)
+    data = await _get_client().payment_readiness(network)
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 

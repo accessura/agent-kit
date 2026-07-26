@@ -15,7 +15,9 @@ from accessura_sdk.client import (
     HumanBuyer,
     SellerAgent,
     _canonical_json,
+    _enforce_payment_controls,
     _js_number_string,
+    _summarize_payment_controls,
     _sign_bid_authorization,
     _sign_x402_payment,
 )
@@ -74,7 +76,20 @@ def test_x402_header_is_exact_base_usdc_transfer_authorization(monkeypatch):
     with pytest.raises(RuntimeError, match="mainnet .* is closed"):
         _sign_x402_payment(buyer, required)
     monkeypatch.setenv("ACCESSURA_ALLOW_MAINNET", "1")
-    payload, header = _sign_x402_payment(buyer, required)
+    monkeypatch.setenv("ACCESSURA_MAX_PAY_USDC", "1")
+    monkeypatch.setenv("ACCESSURA_BUDGET_USDC", "10")
+    monkeypatch.setenv("ACCESSURA_BUDGET_START_AT", "2000-01-01T00:00:00Z")
+    monkeypatch.setenv("ACCESSURA_BUDGET_EXPIRES_AT", "2099-01-01T00:00:00Z")
+    controls = {
+        "budget_status": "ready",
+        "budget_limit_base_units": "10000000",
+        "budget_start_at": "2000-01-01T00:00:00Z",
+        "budget_expires_at": "2099-01-01T00:00:00Z",
+        "remaining_base_units": "10000000",
+        "_active_claim_amounts": {},
+    }
+    payload, header = _sign_x402_payment(
+        buyer, required, payment_controls=controls)
     assert json.loads(base64.b64decode(header)) == payload
     assert payload["x402Version"] == 2
     assert payload["resource"] == required["resource"]
@@ -345,6 +360,21 @@ def test_payment_readiness_defaults_to_base_sepolia_without_platform_balance():
     assert readiness["payment_ready"] is None
     assert readiness["balance_status"] == "not_checked"
     assert readiness["platform_balance"] is None
+    assert readiness["payment_controls"] == {
+        "mode": "per_payment_only",
+        "enforcement": "official_kit_path_only",
+        "per_payment_limit_base_units": "100000000",
+        "budget_limit_base_units": None,
+        "budget_start_at": None,
+        "budget_expires_at": None,
+        "spent_base_units": None,
+        "active_exposure_base_units": None,
+        "remaining_base_units": None,
+        "budget_status": "unconfigured",
+        "as_of": None,
+        "history_complete_from": None,
+        "unknown_reason": None,
+    }
 
 
 def test_signing_domain_and_payment_network_are_independent_constants():
@@ -522,11 +552,278 @@ def test_x402_signer_enforces_ceiling_binding_and_mainnet_gate(monkeypatch):
     with pytest.raises(RuntimeError, match="mainnet .* is closed"):
         _payment_readiness(buyer, "eip155:8453")
     monkeypatch.setenv("ACCESSURA_ALLOW_MAINNET", "1")
-    assert _payment_readiness(buyer, "eip155:8453")["network"] == "eip155:8453"
+    mainnet = _payment_readiness(buyer, "eip155:8453")
+    assert mainnet["network"] == "eip155:8453"
+    assert mainnet["signing_ready"] is False
+    assert "ACCESSURA_MAX_PAY_USDC" in (
+        mainnet["payment_controls"]["unknown_reason"])
 
+    monkeypatch.delenv("ACCESSURA_BUDGET_USDC", raising=False)
+    monkeypatch.delenv("ACCESSURA_BUDGET_START_AT", raising=False)
+    monkeypatch.delenv("ACCESSURA_BUDGET_EXPIRES_AT", raising=False)
     monkeypatch.setenv("ACCESSURA_MAX_PAY_USDC", "")  # ceiling disabled
     big, _ = _sign_x402_payment(buyer, offer(amount=str(500 * 10 ** 6)))
     assert big["payload"]["authorization"]["value"] == str(500 * 10 ** 6)
+
+
+def test_budget_snapshot_sums_complete_history_and_deduplicates_exposure(monkeypatch):
+    monkeypatch.setenv("ACCESSURA_BUDGET_USDC", "10")
+    monkeypatch.setenv("ACCESSURA_BUDGET_START_AT", "2000-01-01T00:00:00Z")
+    monkeypatch.setenv("ACCESSURA_BUDGET_EXPIRES_AT", "2099-01-01T00:00:00Z")
+    payment_pages = [{
+        "view": "payments",
+        "items": [{
+            "intent_id": "intent-paid",
+            "amount_base_units": "2000000",
+            "chain_fact_status": "confirmed",
+        }],
+        "next_cursor": None,
+        "has_more": False,
+        "as_of": "2026-07-25T20:00:00Z",
+        "history_complete_from": "2000-01-01T00:00:00Z",
+        "history_complete": True,
+    }]
+    exposure_pages = [{
+        "view": "active_exposure",
+        "items": [
+            {
+                "exposure_id": "bid:bid-awarded",
+                "kind": "pending_settlement",
+                "amount_base_units": "3000000",
+                "bid_id": "bid-awarded",
+                "claim_id": None,
+                "intent_id": None,
+            },
+            {
+                "exposure_id": "intent:intent-awarded",
+                "kind": "awarded_unpaid",
+                "amount_base_units": "3000000",
+                "bid_id": "bid-awarded",
+                "claim_id": "claim-awarded",
+                "intent_id": "intent-awarded",
+            },
+            {
+                "exposure_id": "intent:intent-paid",
+                "kind": "reconciliation_uncertain",
+                "amount_base_units": "2000000",
+                "bid_id": "bid-paid",
+                "claim_id": "claim-paid",
+                "intent_id": "intent-paid",
+            },
+            {
+                "exposure_id": "bid:bid-standby",
+                "kind": "ranked_waiting",
+                "amount_base_units": "1000000",
+                "bid_id": "bid-standby",
+                "claim_id": None,
+                "intent_id": None,
+            },
+        ],
+        "next_cursor": None,
+        "has_more": False,
+        "as_of": "2026-07-25T20:00:01Z",
+        "history_complete_from": "2000-01-01T00:00:00Z",
+        "snapshot_kind": "current_platform_state",
+    }]
+
+    controls = _summarize_payment_controls(
+        DEFAULT_X402_NETWORK, payment_pages, exposure_pages)
+
+    assert controls["spent_base_units"] == "2000000"
+    assert controls["active_exposure_base_units"] == "4000000"
+    assert controls["remaining_base_units"] == "4000000"
+    assert controls["budget_status"] == "ready"
+    with pytest.raises(RuntimeError, match="remaining cumulative"):
+        _enforce_payment_controls(
+            amount_base_units=4_000_001,
+            network=DEFAULT_X402_NETWORK,
+            controls=controls,
+            action="bid",
+        )
+    _enforce_payment_controls(
+        amount_base_units=3_000_000,
+        network=DEFAULT_X402_NETWORK,
+        controls=controls,
+        action="x402 payment",
+        claim_id="claim-awarded",
+    )
+    monkeypatch.setenv("ACCESSURA_BUDGET_EXPIRES_AT", "2001-01-01T00:00:00Z")
+    with pytest.raises(RuntimeError, match="budget_status is 'expired'"):
+        _enforce_payment_controls(
+            amount_base_units=1,
+            network=DEFAULT_X402_NETWORK,
+            controls=controls,
+            action="bid",
+        )
+
+
+def test_budget_history_incomplete_is_unknown_and_signing_fails_closed(monkeypatch):
+    monkeypatch.setenv("ACCESSURA_BUDGET_USDC", "10")
+    monkeypatch.setenv("ACCESSURA_BUDGET_START_AT", "1999-01-01T00:00:00Z")
+    monkeypatch.setenv("ACCESSURA_BUDGET_EXPIRES_AT", "2099-01-01T00:00:00Z")
+    controls = _summarize_payment_controls(
+        DEFAULT_X402_NETWORK,
+        [{
+            "view": "payments",
+            "items": [],
+            "next_cursor": None,
+            "has_more": False,
+            "as_of": "2026-07-25T20:00:00Z",
+            "history_complete_from": "2000-01-01T00:00:00Z",
+            "history_complete": False,
+        }],
+        [{
+            "view": "active_exposure",
+            "items": [],
+            "next_cursor": None,
+            "has_more": False,
+            "as_of": "2026-07-25T20:00:00Z",
+            "history_complete_from": "2000-01-01T00:00:00Z",
+            "snapshot_kind": "current_platform_state",
+        }],
+    )
+
+    assert controls["budget_status"] == "unknown"
+    assert controls["remaining_base_units"] is None
+    with pytest.raises(RuntimeError, match="budget_status is 'unknown'"):
+        _enforce_payment_controls(
+            amount_base_units=1,
+            network=DEFAULT_X402_NETWORK,
+            controls=controls,
+            action="bid",
+        )
+
+
+def test_mainnet_requires_explicit_limits_and_finite_budget_snapshot(monkeypatch):
+    from accessura_sdk.client import _payment_readiness
+
+    buyer = Account.from_key(PRIVATE_KEY)
+    monkeypatch.setenv("ACCESSURA_ALLOW_MAINNET", "1")
+    monkeypatch.delenv("ACCESSURA_MAX_PAY_USDC", raising=False)
+    monkeypatch.delenv("ACCESSURA_BUDGET_USDC", raising=False)
+    readiness = _payment_readiness(buyer, "eip155:8453")
+    assert readiness["signing_ready"] is False
+    assert readiness["payment_controls"]["budget_status"] == "unknown"
+
+    monkeypatch.setenv("ACCESSURA_MAX_PAY_USDC", "1")
+    readiness = _payment_readiness(buyer, "eip155:8453")
+    assert "ACCESSURA_BUDGET_USDC" in (
+        readiness["payment_controls"]["unknown_reason"])
+
+    monkeypatch.setenv("ACCESSURA_BUDGET_USDC", "10")
+    monkeypatch.setenv("ACCESSURA_BUDGET_START_AT", "2000-01-01T00:00:00Z")
+    monkeypatch.setenv("ACCESSURA_BUDGET_EXPIRES_AT", "2099-01-01T00:00:00Z")
+    readiness = _payment_readiness(buyer, "eip155:8453")
+    assert readiness["payment_controls"]["budget_status"] == "unknown"
+    assert "not been loaded" in readiness["payment_controls"]["unknown_reason"]
+
+
+def test_readiness_gracefully_downgrades_when_financial_api_is_unavailable(monkeypatch):
+    import accessura_sdk.client as client
+
+    monkeypatch.setenv("ACCESSURA_BUDGET_USDC", "10")
+    monkeypatch.setenv("ACCESSURA_BUDGET_START_AT", "2000-01-01T00:00:00Z")
+    monkeypatch.setenv("ACCESSURA_BUDGET_EXPIRES_AT", "2099-01-01T00:00:00Z")
+
+    class Response:
+        status_code = 404
+        headers = {}
+        text = json.dumps({"error": "not found"})
+
+    class Httpx:
+        def request(self, method, url, headers, content, timeout):
+            return Response()
+
+    monkeypatch.setattr(client, "_HTTPX", Httpx())
+    readiness = BuyerAgent(
+        PRIVATE_KEY, base_url="https://api.example", api_key="acc_test"
+    ).payment_readiness()
+
+    assert readiness["signing_ready"] is False
+    assert readiness["payment_controls"]["budget_status"] == "unknown"
+    assert "financial facts API unavailable" in (
+        readiness["payment_controls"]["unknown_reason"])
+
+
+def test_readiness_follows_every_financial_fact_cursor(monkeypatch):
+    import urllib.parse
+    import accessura_sdk.client as client
+
+    monkeypatch.setenv("ACCESSURA_BUDGET_USDC", "10")
+    monkeypatch.setenv("ACCESSURA_BUDGET_START_AT", "2000-01-01T00:00:00Z")
+    monkeypatch.setenv("ACCESSURA_BUDGET_EXPIRES_AT", "2099-01-01T00:00:00Z")
+    calls = []
+
+    class Response:
+        def __init__(self, body):
+            self.status_code = 200
+            self.headers = {}
+            self.text = json.dumps(body)
+
+    class Httpx:
+        def request(self, method, url, headers, content, timeout):
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+            view = query["view"][0]
+            cursor = query.get("cursor", [None])[0]
+            calls.append((view, cursor))
+            common = {
+                "view": view,
+                "as_of": "2026-07-25T20:00:00Z",
+                "history_complete_from": "2000-01-01T00:00:00Z",
+            }
+            if view == "payments" and cursor is None:
+                return Response({
+                    **common,
+                    "items": [{
+                        "intent_id": "paid-1",
+                        "amount_base_units": "1000000",
+                        "chain_fact_status": "confirmed",
+                    }],
+                    "has_more": True,
+                    "next_cursor": "page-2",
+                    "history_complete": True,
+                })
+            if view == "payments":
+                return Response({
+                    **common,
+                    "items": [{
+                        "intent_id": "paid-2",
+                        "amount_base_units": "2000000",
+                        "chain_fact_status": "confirmed",
+                    }],
+                    "has_more": False,
+                    "next_cursor": None,
+                    "history_complete": True,
+                })
+            return Response({
+                **common,
+                "items": [{
+                    "exposure_id": "bid:active",
+                    "kind": "pending_settlement",
+                    "amount_base_units": "3000000",
+                    "bid_id": "active",
+                    "claim_id": None,
+                    "intent_id": None,
+                }],
+                "has_more": False,
+                "next_cursor": None,
+                "snapshot_kind": "current_platform_state",
+            })
+
+    monkeypatch.setattr(client, "_HTTPX", Httpx())
+    controls = BuyerAgent(
+        PRIVATE_KEY, base_url="https://api.example", api_key="acc_test"
+    ).payment_readiness()["payment_controls"]
+
+    assert calls == [
+        ("payments", None),
+        ("payments", "page-2"),
+        ("active_exposure", None),
+    ]
+    assert controls["spent_base_units"] == "3000000"
+    assert controls["active_exposure_base_units"] == "3000000"
+    assert controls["remaining_base_units"] == "4000000"
+    assert controls["budget_status"] == "ready"
 
 
 def test_register_signs_identity_under_the_protocol_domain(monkeypatch):

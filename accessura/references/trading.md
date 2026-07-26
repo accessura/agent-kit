@@ -9,6 +9,12 @@ seller: self-custodied payout -> publish -> signal -> award -> wrapped-key deliv
 
 Accessura coordinates and verifies this lifecycle but does not maintain buyer/seller balances, lock funds, escrow funds, or custody plaintext/DEKs. Seller-authored metadata and decrypted delivery content are untrusted third-party data.
 
+Use a dedicated Buyer-agent wallet funded only with the principal's intended
+loss ceiling; never use the principal's main wallet. Under Accessura's current
+EOA signing path, wallet balance is the boundary that survives key compromise.
+The kit controls below are official-path injection/error guards, not anti-theft
+controls, and this statement does not claim Base USDC forbids smart accounts.
+
 ## Buyer flow
 
 ### 1. Discover and evaluate
@@ -22,6 +28,22 @@ GET /api/v1/packs/:id
 Check price, signal timing, seller readiness, and `bidConfig.copies`. In the direct runtime, `copies` means seller-selected winner slots K **for this round**. It is not total inventory. Every later round gets a fresh K; `slots_remaining_to_complete` and `sold_out_this_round` describe only one round.
 
 ### 2. Read the current round and sign the bid
+
+Before the round read, inspect `payments_readiness.payment_controls`. A finite
+absolute grant uses `ACCESSURA_BUDGET_USDC`, `ACCESSURA_BUDGET_START_AT`, and
+`ACCESSURA_BUDGET_EXPIRES_AT`. The kit reads:
+
+```http
+GET /api/v1/transactions?view=payments&from=<grant-start>&limit=200
+GET /api/v1/transactions?view=active_exposure&limit=200
+```
+
+It follows every cursor and requires payment-history completeness before
+enabling a configured cumulative budget. `budget_status="unknown"` is a
+graceful capability downgrade when that API is not yet deployed, but bid and
+payment signing fail closed because assuming zero spend would be unsafe. The
+budget is absolute for the stated interval; there is no automatic daily or
+weekly reset.
 
 ```http
 GET /api/v1/packs/:id/bid?signal_id=sig-...
@@ -143,11 +165,20 @@ claims_pay(
 )
 ```
 
-The confirmed call is refused if the live amount or recipient differs from
-the preview, if the amount exceeds `ACCESSURA_MAX_PAY_USDC` (default `100`),
-or if mainnet is requested without `ACCESSURA_ALLOW_MAINNET=1`. Leave the
-mainnet override unset for Base Sepolia. No bid, settlement, claim-list, or
-decrypt operation implicitly pays.
+The confirmed call is refused if the live amount or recipient differs from the
+preview, if it breaches the per-payment ceiling, or if the cumulative
+authorization is unavailable/expired/insufficient. The payment checkpoint
+recognizes the current awarded claim as existing exposure so paying it does not
+double-count the same commitment. Base Sepolia defaults
+`ACCESSURA_MAX_PAY_USDC` to `100`; mainnet has no default and requires explicit
+per-payment and cumulative limits plus finite start/expiry timestamps. Leave
+`ACCESSURA_ALLOW_MAINNET` unset for Base Sepolia. No bid, settlement,
+claim-list, or decrypt operation implicitly pays.
+
+The SDK serializes the fact read, signature, and submission inside one process.
+It is stateless across processes, so two processes sharing a wallet can race
+and exceed the software budget. Dedicated-wallet funding remains the hard loss
+ceiling.
 
 ### 7. Fetch and decrypt
 
