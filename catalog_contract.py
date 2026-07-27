@@ -16,6 +16,7 @@ EXPECTED_MCP_TOOLS = frozenset({
     "bids_place",
     "bids_status",
     "catalog_get",
+    "clearing_transcripts",
     "claims_decrypt",
     "claims_deliver",
     "claims_list",

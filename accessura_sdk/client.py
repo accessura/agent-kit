@@ -1180,6 +1180,36 @@ class BuyerAgent:
                      f"{self.api}/packs/{pack_id}", self._auth())
         return r.get("pack", r)
 
+    def get_clearing_transcripts(
+        self,
+        pack_id: str,
+        signal_id: str = "",
+        round_index: Optional[int] = None,
+        limit: int = 10,
+    ) -> dict:
+        """Read signed clears plus decimal-USDC price-discovery summaries."""
+        if round_index is not None and (
+            isinstance(round_index, bool)
+            or not isinstance(round_index, int)
+            or round_index < 0
+        ):
+            raise RuntimeError("round_index must be a non-negative integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
+            raise RuntimeError("limit must be an integer from 1 to 100")
+        params = [
+            f"pack_id={urllib.parse.quote(pack_id, safe='')}",
+            f"limit={limit}",
+        ]
+        if signal_id:
+            params.append(f"signal_id={urllib.parse.quote(signal_id, safe='')}")
+        if round_index is not None:
+            params.append(f"round_index={round_index}")
+        return _request(
+            "GET",
+            f"{self.api}/clearing/transcripts?{'&'.join(params)}",
+            {},
+        )
+
     def list_packs(self, topic_slug: str = "",
                    limit: int = 20) -> list[dict]:
         params = [f"limit={limit}"]

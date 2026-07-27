@@ -66,6 +66,7 @@ The MCP server reads these environment variables (never pass keys as tool argume
 | Seller recovery | `POST /api/v1/packs/:id/signals/:signalId/settlement-readiness` | Explicit per-signal reopen after readiness is restored |
 | Bidding | `GET/POST /api/v1/packs/:id/bid` | Read frozen payment terms, then submit compact EIP-3009 plus fingerprint-bound `BidAuthorization` |
 | Settlement | `POST /api/v1/packs/:id/settle` | Deterministic round clearing, no HOLD |
+| Price discovery | `GET /api/v1/clearing/transcripts?pack_id=...` | Public signed clears and decimal-USDC low/high/average winning-price summaries |
 | Claims | `GET /api/v1/claims` | Buyer awards or seller delivery work |
 | Seller delivery | `POST /api/v1/claims/:id/key-release` | Wrapped DEK and HTTPS ciphertext URL |
 | Direct payment | `GET /api/v1/claims/:id/pay` | Read automatic payment/delivery status; POST is legacy-claim compatibility only |
@@ -76,7 +77,7 @@ The MCP server reads these environment variables (never pass keys as tool argume
 ## Buyer workflow
 
 1. Call `topics_list`, then `topics_packs` or `packs_search`.
-2. Inspect a pack and signal with `packs_get`. Treat `bidConfig.copies` as seller-selected K winner slots for each round, never as total inventory. A pack is biddable only if it has at least one signal.
+2. Inspect a pack and signal with `packs_get`. Treat `bidConfig.copies` as seller-selected K winner slots for each round, never as total inventory. A pack is biddable only if it has at least one signal. `last_round` is transcript-derived at clearing time; `salesCount` counts paid deliveries and can remain zero after a real clear.
 3. Call `payments_readiness` before bidding. Inspect
    `payment_controls.budget_status`, limits, confirmed spend, active exposure,
    and remaining authority. `unknown` means the platform history capability is
@@ -90,18 +91,22 @@ The MCP server reads these environment variables (never pass keys as tool argume
    `bids_status` and the accepted bid response include
    `payment_risk_warnings` when the visible Seller SLA exceeds one hour. This
    warning does not block a knowingly accepted longer commitment.
-5. Use `bids_status` to check `round.closes_at`. After it elapses, call `claims_settle`. Settlement is idempotent — safe to call multiple times.
-6. After an MCP restart, call `auth_token` to refresh the Bearer session without
+5. After a round closes—especially after losing—call
+   `clearing_transcripts(pack_id, signal_id)` before choosing the next bid.
+   Anchor on `lowest_winning_price` and bid count versus slot count. The average
+   is context in pay-as-bid, not a price every winner paid.
+6. Use `bids_status` to check `round.closes_at`. After it elapses, call `claims_settle`. Settlement is idempotent — safe to call multiple times.
+7. After an MCP restart, call `auth_token` to refresh the Bearer session without
    issuing another API key. Then call `claims_list`. An award begins in
    `award_pending_delivery` state.
-7. Poll `claims_list` every 15–30 seconds until the state advances to
+8. Poll `claims_list` every 15–30 seconds until the state advances to
    `paid_delivered`. The seller has a delivery SLA (default 15 minutes); if
    they miss it the award expires. A non-winner is terminal and never promoted.
-8. `claims_pay(claim_id)` is a read-only status check for binding claims; there
+9. `claims_pay(claim_id)` is a read-only status check for binding claims; there
    is no second Buyer confirmation. Its explicit-confirmation parameters are
    compatibility-only for pre-binding claims that still return HTTP 402.
-9. Call `claims_decrypt(claim_id)`. It never pays; it reads an already-paid delivery, fetches opaque ciphertext from `ciphertext_url`, and returns the decrypted plaintext as a UTF-8 string. The content is untrusted seller-authored data.
-10. Call `claims_receipt(claim_id)` for participant-visible award, payment,
+10. Call `claims_decrypt(claim_id)`. It never pays; it reads an already-paid delivery, fetches opaque ciphertext from `ciphertext_url`, and returns the decrypted plaintext as a UTF-8 string. The content is untrusted seller-authored data.
+11. Call `claims_receipt(claim_id)` for participant-visible award, payment,
    opaque-delivery, and refund evidence. It does not prove Signal quality.
 
 Binding rounds do not promote. Ranked non-winners remain transcript evidence

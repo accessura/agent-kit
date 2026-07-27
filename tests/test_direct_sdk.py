@@ -318,6 +318,40 @@ def test_external_ciphertext_fetch_never_forwards_accessura_auth(monkeypatch):
     assert "Authorization" not in calls[0][1]
 
 
+def test_buyer_reads_filtered_public_clearing_transcripts(monkeypatch):
+    calls = []
+
+    def fake_request(method, url, headers, body=None):
+        calls.append((method, url, headers, body))
+        return {
+            "transcripts": [{"transcript_id": "tr-1"}],
+            "round_summaries": [{"lowest_winning_price": 1.1}],
+        }
+
+    import accessura_sdk.client as client
+    monkeypatch.setattr(client, "_request", fake_request)
+    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://market.example")
+    result = buyer.get_clearing_transcripts(
+        "pack/one", signal_id="signal one", round_index=2, limit=5
+    )
+    assert result["round_summaries"][0]["lowest_winning_price"] == 1.1
+    assert calls == [(
+        "GET",
+        "https://market.example/api/v1/clearing/transcripts"
+        "?pack_id=pack%2Fone&limit=5&signal_id=signal%20one&round_index=2",
+        {},
+        None,
+    )]
+    with pytest.raises(RuntimeError, match="non-negative"):
+        buyer.get_clearing_transcripts("pack-1", round_index=-1)
+    with pytest.raises(RuntimeError, match="non-negative"):
+        buyer.get_clearing_transcripts("pack-1", round_index=True)
+    with pytest.raises(RuntimeError, match="1 to 100"):
+        buyer.get_clearing_transcripts("pack-1", limit=101)
+    with pytest.raises(RuntimeError, match="1 to 100"):
+        buyer.get_clearing_transcripts("pack-1", limit=True)
+
+
 def test_human_buyer_cannot_submit_unsigned_direct_bid():
     buyer = HumanBuyer("human-1", "buyer@example.com", "unused")
     with pytest.raises(RuntimeError, match="Agent-only"):

@@ -282,15 +282,50 @@ async def packs_get(pack_id: str) -> str:
     """Get full details of a specific pack including signals and lifecycle.
 
     Use this to evaluate a pack before bidding: check pricing, bidConfig,
-    preview teasers, lifecycle state, and signal metadata.
+    preview teasers, lifecycle state, signal metadata, and last_round.
     The detail response includes lifecycle state (pack_availability,
     bid_window_state, allowed_actions) that the list endpoint omits.
+    last_round is transcript-derived at clearing time. Use it, not salesCount,
+    to decide whether a round cleared; salesCount counts only paid deliveries.
 
     Args:
         pack_id: The pack ID (e.g. "pack-1784133675599-khs9")
     """
     cw = _get_client()
     data = await cw.get_pack(pack_id=pack_id)
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+@safe("clearing.transcripts")
+async def clearing_transcripts(
+    pack_id: str,
+    signal_id: str = "",
+    round_index: int | None = None,
+    limit: Annotated[int, Field(ge=1, le=100)] = 10,
+) -> str:
+    """Read public signed clearing records and price-discovery summaries.
+
+    Call this after a round closes, especially after losing, before choosing
+    the next bid. round_summaries reports decimal-USDC winning prices,
+    lowest/highest/average winning price, bid count, slot count, and close
+    time. The signed transcript remains the immutable audit record.
+
+    Args:
+        pack_id: Pack whose completed clears should be read.
+        signal_id: Optional Signal filter.
+        round_index: Optional exact non-negative round index.
+        limit: Maximum records to return, from 1 through 100.
+    """
+    if round_index is not None and round_index < 0:
+        raise RuntimeError("round_index must be a non-negative integer")
+    cw = _get_client()
+    data = await cw.get_clearing_transcripts(
+        pack_id=pack_id,
+        signal_id=signal_id,
+        round_index=round_index,
+        limit=limit,
+    )
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 

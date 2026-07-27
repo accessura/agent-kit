@@ -222,6 +222,20 @@ async def get_pack(pack_id: str) -> dict:
     return await _get(f"/packs/{_quote(pack_id)}")
 
 
+async def get_clearing_transcripts(
+    pack_id: str,
+    signal_id: str = "",
+    round_index: Optional[int] = None,
+    limit: int = 10,
+) -> dict:
+    params: dict[str, Any] = {"pack_id": pack_id, "limit": limit}
+    if signal_id:
+        params["signal_id"] = signal_id
+    if round_index is not None:
+        params["round_index"] = round_index
+    return await _get("/clearing/transcripts", params)
+
+
 async def publish_pack(pack_data: dict) -> dict:
     return await _post("/packs", pack_data)
 

@@ -56,16 +56,21 @@ again. To uninstall, remove only `~/.codex/skills/accessura` or
 
 ## MCP server
 
-The FastMCP server exposes an exact 25-tool surface, including `auth_token`,
+The FastMCP server exposes an exact 26-tool surface, including `auth_token`,
 `payments_readiness`, `bids_place`, `claims_settle`, `claims_pay`,
 `claims_receipt`, `claims_decrypt`, `claims_deliver`, `seller_payout_bind`, and
 `seller_readiness_get`, `seller_readiness_update`, and
-`seller_signal_reopen`.
+`seller_signal_reopen`, plus public `clearing_transcripts` price discovery.
 
 ```bash
 python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.8.0"
 claude mcp add accessura -- accessura-mcp
 ```
+
+The immutable `v0.8.0` tag remains the released 25-tool surface. The 26th
+`clearing_transcripts` tool in current source is queued for the next version;
+the release PR will pin a new exact manifest and tag instead of rewriting the
+v0.8.0 evidence file.
 
 `v0.8.0` makes a bid a binding payment commitment. The EIP-3009 signing
 checkpoint moves into `bids_place`, and **seller delivery — not clearing —
@@ -200,6 +205,7 @@ verification. It is independent from the default x402 payment network
 | `GET /packs/:id/bid` | Current round and buyer bid status | Buyer |
 | `POST /packs/:id/bid` | Submit signed `BidAuthorization` | Buyer |
 | `POST /packs/:id/settle` | Deterministic round clearing | Buyer or seller |
+| `GET /clearing/transcripts?pack_id=...` | Signed clears plus decimal-USDC price discovery | Public |
 | `GET /claims` | Buyer awards / seller delivery work | Bearer JWT |
 | `GET /sellers/readiness` | Private payout/delivery state and failed-round counter | Seller Bearer JWT |
 | `POST /sellers/readiness` | Pause/resume delivery or update the listing-visible SLA | Seller Bearer JWT |

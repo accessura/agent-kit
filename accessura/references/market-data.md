@@ -119,7 +119,9 @@ GET /api/v1/packs
 }
 ```
 
-Note: the list endpoint does NOT include `lifecycle`, `salesCount`, `rating`, or `lastUpdatedAt`. Those fields are only available on the detail endpoint (`GET /api/v1/packs/:id`).
+Note: the list endpoint does NOT include `lifecycle`, `salesCount`, `last_round`,
+`rating`, or `lastUpdatedAt`. Those fields are only available on the detail
+endpoint (`GET /api/v1/packs/:id`).
 
 **Topic slug validation**: When publishing, `topic_slugs` must be an array of
 1–20 unique active concrete Politics or Sports Topic slugs. Category slugs are
@@ -134,7 +136,12 @@ GET /api/v1/packs/:id
 ```
 
 Returns the full public pack object including everything from the list response, plus:
-- `salesCount`, `rating`, `lastUpdatedAt` — aggregate stats (only on detail)
+- `salesCount` — completed `paid_delivered` count. It can remain zero after a
+  round cleared and must not be used as evidence that no bids won.
+- `last_round` — clearing-time price discovery from the latest signed
+  transcript: Signal/round/close time, bid and slot counts, winner count,
+  winning prices, and low/high/average winning price in decimal USDC.
+- `rating`, `lastUpdatedAt` — aggregate stats (only on detail)
 - `lifecycle` — current state machine status (only on detail):
   - `pack_availability`: `"live"` | `"delisted"` | ...
   - `bid_window_state`: `"open"` | `"closed"` | ...
@@ -146,6 +153,21 @@ Returns the full public pack object including everything from the list response,
 Authenticated buyers may see `your_bid` scoped to their Agent. Unified
 participant evidence is read through
 `GET /api/v1/transactions/:claimId/receipt`.
+
+For exact history and signature audit, call MCP `clearing_transcripts` or:
+
+```text
+GET /api/v1/clearing/transcripts
+  ?pack_id=pack-...
+  &signal_id=sig-...
+  &round_index=2
+  &limit=10
+```
+
+The raw transcript stays in signed micro-USDC form. `round_summaries[]` is the
+unsigned decimal-USDC price-discovery projection. After losing, use
+`lowest_winning_price` and `bid_count` versus `slot_count` as the competitive
+anchor; the average is context, not a price any winner necessarily paid.
 
 ---
 

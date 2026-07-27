@@ -568,11 +568,12 @@ def test_claims_receipt_uses_direct_transaction_receipt(monkeypatch):
     assert result["receipt"]["payment"]["transaction_hash"] == "0xtx"
 
 
-def test_mcp_surface_is_exact_25_tool_contract():
+def test_mcp_surface_is_exact_26_tool_contract():
     names = {tool.name for tool in asyncio.run(server.mcp.list_tools())}
-    assert len(names) == 25
+    assert len(names) == 26
     assert {
         "auth_token",
+        "clearing_transcripts",
         "claims_receipt",
         "seller_readiness_get",
         "seller_readiness_update",
@@ -587,7 +588,7 @@ def test_mcp_surface_equals_the_shared_exact_manifest():
     assert names == EXPECTED_MCP_TOOLS
 
 
-def test_checked_in_exact_manifest_and_sha256_match_the_shared_contract():
+def test_released_v080_manifest_stays_immutable_while_next_surface_adds_tool():
     manifest_path = (
         Path(__file__).resolve().parents[1]
         / "docs"
@@ -597,7 +598,7 @@ def test_checked_in_exact_manifest_and_sha256_match_the_shared_contract():
     manifest = json.loads(raw)
 
     assert manifest["manifest_version"] == "0.8.0"
-    assert manifest["tools"] == sorted(EXPECTED_MCP_TOOLS)
+    assert manifest["tools"] == sorted(EXPECTED_MCP_TOOLS - {"clearing_transcripts"})
     assert len(manifest["tools"]) == len(set(manifest["tools"])) == 25
     payment_schema = manifest["output_schemas"]["payments_readiness"]
     assert "payment_controls" in payment_schema["required"]
@@ -612,6 +613,74 @@ def test_checked_in_exact_manifest_and_sha256_match_the_shared_contract():
     } <= set(controls_schema["required"])
     assert "unknown" in controls_schema["properties"]["budget_status"]["enum"]
     assert hashlib.sha256(raw).hexdigest() == EXPECTED_MCP_MANIFEST_SHA256
+
+
+def test_clearing_transcript_tool_and_pack_detail_expose_price_discovery(monkeypatch):
+    expected_summary = {
+        "bid_count": 6,
+        "slot_count": 3,
+        "winning_prices": [1.3, 1.2, 1.1],
+        "lowest_winning_price": 1.1,
+    }
+
+    class FakeClient:
+        async def get_pack(self, pack_id):
+            return {
+                "id": pack_id,
+                "salesCount": 0,
+                "last_round": expected_summary,
+            }
+
+        async def get_clearing_transcripts(
+            self, pack_id, signal_id="", round_index=None, limit=10
+        ):
+            assert (pack_id, signal_id, round_index, limit) == (
+                "pack-1", "signal-1", 2, 5
+            )
+            return {
+                "transcripts": [{"transcript_id": "tr-1", "signature": "0xsigned"}],
+                "round_summaries": [expected_summary],
+                "total": 1,
+                "has_more": False,
+            }
+
+    monkeypatch.setattr(server, "_get_client", lambda: FakeClient())
+    pack = json.loads(asyncio.run(server.packs_get.__wrapped__("pack-1")))
+    assert pack["salesCount"] == 0
+    assert pack["last_round"]["lowest_winning_price"] == 1.1
+
+    history = json.loads(asyncio.run(
+        server.clearing_transcripts.__wrapped__(
+            pack_id="pack-1",
+            signal_id="signal-1",
+            round_index=2,
+            limit=5,
+        )
+    ))
+    assert history["round_summaries"][0]["winning_prices"] == [1.3, 1.2, 1.1]
+
+
+def test_clearing_transcript_wrapper_builds_exact_public_query(monkeypatch):
+    calls = []
+
+    async def fake_get(path, params=None):
+        calls.append((path, params))
+        return {"transcripts": [], "round_summaries": [], "total": 0}
+
+    monkeypatch.setattr(client_wrapper, "_get", fake_get)
+    result = asyncio.run(client_wrapper.get_clearing_transcripts(
+        "pack-1", signal_id="signal-1", round_index=3, limit=7
+    ))
+    assert result["total"] == 0
+    assert calls == [(
+        "/clearing/transcripts",
+        {
+            "pack_id": "pack-1",
+            "signal_id": "signal-1",
+            "round_index": 3,
+            "limit": 7,
+        },
+    )]
 
 
 def test_mcp_publish_schema_exposes_contract_bounds_and_enums():
