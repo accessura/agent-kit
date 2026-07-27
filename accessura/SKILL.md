@@ -1,6 +1,6 @@
 ---
 name: accessura
-description: Operate the Accessura direct x402 encrypted-data marketplace. Buyers discover Polymarket-linked Politics and Sports Topics, place EIP-3009-backed sealed bids, settle round-local K awards, and decrypt after seller-triggered direct Base USDC payment. Human or agent sellers bind self-custodied payout wallets, publish encrypted signals, and deliver buyer-specific wrapped keys.
+description: Operate the Accessura direct x402 encrypted-data marketplace. Buyers discover Polymarket-linked Politics and Sports Topics, place EIP-3009-backed sealed bids, wait for automatic round-local K clearing, and decrypt after seller-triggered direct Base USDC payment. Human or agent sellers bind self-custodied payout wallets, publish encrypted signals, and deliver buyer-specific wrapped keys.
 ---
 
 # Accessura Agent Skill
@@ -65,7 +65,7 @@ The MCP server reads these environment variables (never pass keys as tool argume
 | Seller readiness | `GET/POST /api/v1/sellers/readiness` | Inspect strikes; pause/resume delivery; update listing-visible SLA |
 | Seller recovery | `POST /api/v1/packs/:id/signals/:signalId/settlement-readiness` | Explicit per-signal reopen after readiness is restored |
 | Bidding | `GET/POST /api/v1/packs/:id/bid` | Read frozen payment terms, then submit compact EIP-3009 plus fingerprint-bound `BidAuthorization` |
-| Settlement | `POST /api/v1/packs/:id/settle` | Deterministic round clearing, no HOLD |
+| Settlement recovery | `POST /api/v1/packs/:id/settle` | Optional idempotent due-round/deadline sweep; normal clearing is automatic |
 | Price discovery | `GET /api/v1/clearing/transcripts?pack_id=...` | Public signed clears and decimal-USDC low/high/average winning-price summaries |
 | Claims | `GET /api/v1/claims` | Buyer awards or seller delivery work |
 | Seller delivery | `POST /api/v1/claims/:id/key-release` | Wrapped DEK and HTTPS ciphertext URL |
@@ -94,11 +94,16 @@ The MCP server reads these environment variables (never pass keys as tool argume
    "Sealed" means other bidders cannot read the live bid. Accessura receives
    the price and exact EIP-3009 amount in clear; this is platform-private, not
    cryptographic commit–reveal.
-5. After a round closes—especially after losing—call
+5. Use `bids_status` to check `round.closes_at`, then wait. Background clearing
+   runs automatically shortly after the close; do not race the close or treat
+   `claims_settle` as a Buyer duty. That tool is only an optional idempotent
+   due-round/deadline sweep.
+6. After the close—especially after losing—call
    `clearing_transcripts(pack_id, signal_id)` before choosing the next bid.
-   Anchor on `lowest_winning_price` and bid count versus slot count. The average
-   is context in pay-as-bid, not a price every winner paid.
-6. Use `bids_status` to check `round.closes_at`. After it elapses, call `claims_settle`. Settlement is idempotent — safe to call multiple times.
+   Anchor on `lowest_winning_price` and eligible `bid_count` versus
+   `slot_count`; `rejected_count` is separate because rejected bids never
+   competed for a slot. The average is six-decimal USDC context in pay-as-bid,
+   not a price every winner paid.
 7. After an MCP restart, call `auth_token` to refresh the Bearer session without
    issuing another API key. Then call `claims_list`. An award begins in
    `award_pending_delivery` state.

@@ -14,7 +14,7 @@ Connect an AI buyer or a human/agent seller to the Accessura encrypted-data mark
 All authenticated launch integrations follow the same lifecycle:
 
 ```text
-buyer:  discover -> binding bid (EIP-3009) -> settle -> wait for seller delivery/payment -> decrypt
+buyer:  discover -> binding bid (EIP-3009) -> wait for automatic clear -> read transcript -> claim -> decrypt
 seller: register -> bind payout wallet -> publish -> append encrypted signal -> deliver envelope + ciphertext URL
 ```
 
@@ -63,16 +63,15 @@ The FastMCP server exposes an exact 26-tool surface, including `auth_token`,
 `seller_signal_reopen`, plus public `clearing_transcripts` price discovery.
 
 ```bash
-python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.8.0"
+python -m pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.8.1"
 claude mcp add accessura -- accessura-mcp
 ```
 
-The immutable `v0.8.0` tag remains the released 25-tool surface. The 26th
-`clearing_transcripts` tool in current source is queued for the next version;
-the release PR will pin a new exact manifest and tag instead of rewriting the
-v0.8.0 evidence file.
+The immutable `v0.8.0` tag remains the released 25-tool surface. This release
+targets `v0.8.1`, whose pinned 26-tool manifest adds
+`clearing_transcripts` without rewriting the `v0.8.0` evidence file.
 
-`v0.8.0` makes a bid a binding payment commitment. The EIP-3009 signing
+`v0.8.1` carries forward `v0.8.0`'s binding payment commitment. The EIP-3009 signing
 checkpoint moves into `bids_place`, and **seller delivery — not clearing —
 triggers submission**, so a buyer still parts with no funds until the envelope
 is durably stored. Losing bids are terminal: their authorization is released
@@ -87,7 +86,7 @@ read-only platform payment/exposure facts, with no platform budget ledger.
 
 The immutable version tag makes the installation reproducible and installs both
 the `accessura_sdk` Python package and the `accessura-mcp` console command. To
-upgrade, replace `v0.8.0` with a newer published tag and add `--upgrade` to the
+upgrade, replace the pinned tag with a newer published tag and add `--upgrade` to the
 same `pip install` command. To uninstall, run
 `python -m pip uninstall accessura-agent-kit`.
 
@@ -162,7 +161,12 @@ buyer.get_api_key()
 # bid() reads frozen payment terms, applies the budget, and signs both the
 # compact EIP-3009 authorization and its fingerprint-bound BidAuthorization.
 bid = buyer.bid(pack_id, signal_id, 0.15)
-buyer.settle(pack_id, signal_id)
+
+# Clearing happens automatically shortly after round.closes_at.
+clears = buyer.get_clearing_transcripts(pack_id, signal_id=signal_id)
+last_round = clears["round_summaries"][0]
+claims = buyer.get_claims()
+claim_id = claims[0]["claim_id"]
 
 # Seller delivery automatically submits a winning bid's stored authorization.
 payment_status = buyer.get_payment(claim_id)
@@ -202,9 +206,10 @@ verification. It is independent from the default x402 payment network
 | API | Purpose | Auth |
 |---|---|---|
 | `GET /topics?state=active` / `GET /topics/:slug/packs` | Discovery | Public |
+| `GET /packs/:id?signal_id=...` | Pack detail; optional Signal-scoped `last_round` | Public |
 | `GET /packs/:id/bid` | Current round and buyer bid status | Buyer |
 | `POST /packs/:id/bid` | Submit signed `BidAuthorization` | Buyer |
-| `POST /packs/:id/settle` | Deterministic round clearing | Buyer or seller |
+| `POST /packs/:id/settle` | Optional idempotent due-round/deadline sweep; normal clearing is automatic | Buyer or seller |
 | `GET /clearing/transcripts?pack_id=...` | Signed clears plus decimal-USDC price discovery | Public |
 | `GET /claims` | Buyer awards / seller delivery work | Bearer JWT |
 | `GET /sellers/readiness` | Private payout/delivery state and failed-round counter | Seller Bearer JWT |

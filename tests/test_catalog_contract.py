@@ -19,6 +19,7 @@ from catalog_contract import (
     REQUIRED_FIELDS,
     SIGNAL_CONTRACT,
     SIGNAL_TYPES,
+    V080_MCP_MANIFEST_SHA256,
     assert_catalog_parity,
     normalize_signal_schema,
     normalize_topic_slugs,
@@ -588,7 +589,7 @@ def test_mcp_surface_equals_the_shared_exact_manifest():
     assert names == EXPECTED_MCP_TOOLS
 
 
-def test_released_v080_manifest_stays_immutable_while_next_surface_adds_tool():
+def test_released_v080_manifest_stays_immutable():
     manifest_path = (
         Path(__file__).resolve().parents[1]
         / "docs"
@@ -612,6 +613,29 @@ def test_released_v080_manifest_stays_immutable_while_next_surface_adds_tool():
         "budget_status",
     } <= set(controls_schema["required"])
     assert "unknown" in controls_schema["properties"]["budget_status"]["enum"]
+    assert hashlib.sha256(raw).hexdigest() == V080_MCP_MANIFEST_SHA256
+
+
+def test_v081_manifest_pins_the_exact_26_tool_surface():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "docs"
+        / "exact-mcp-tool-manifest-v0.8.1.json"
+    )
+    raw = manifest_path.read_bytes()
+    manifest = json.loads(raw)
+
+    assert manifest["manifest_version"] == "0.8.1"
+    assert manifest["tools"] == sorted(EXPECTED_MCP_TOOLS)
+    assert len(manifest["tools"]) == len(set(manifest["tools"])) == 26
+    old_manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "docs"
+            / "exact-mcp-tool-manifest-v0.8.0.json"
+        ).read_text()
+    )
+    assert manifest["output_schemas"] == old_manifest["output_schemas"]
     assert hashlib.sha256(raw).hexdigest() == EXPECTED_MCP_MANIFEST_SHA256
 
 
@@ -624,7 +648,8 @@ def test_clearing_transcript_tool_and_pack_detail_expose_price_discovery(monkeyp
     }
 
     class FakeClient:
-        async def get_pack(self, pack_id):
+        async def get_pack(self, pack_id, signal_id=""):
+            assert (pack_id, signal_id) == ("pack-1", "signal-1")
             return {
                 "id": pack_id,
                 "salesCount": 0,
@@ -645,7 +670,9 @@ def test_clearing_transcript_tool_and_pack_detail_expose_price_discovery(monkeyp
             }
 
     monkeypatch.setattr(server, "_get_client", lambda: FakeClient())
-    pack = json.loads(asyncio.run(server.packs_get.__wrapped__("pack-1")))
+    pack = json.loads(asyncio.run(
+        server.packs_get.__wrapped__("pack-1", "signal-1")
+    ))
     assert pack["salesCount"] == 0
     assert pack["last_round"]["lowest_winning_price"] == 1.1
 
@@ -672,18 +699,60 @@ def test_mcp_discloses_platform_private_bids_and_opaque_dek_boundary():
     assert "cannot prove server-side" in delivery_description
 
 
+def test_claims_settle_is_documented_as_optional_after_automatic_clearing():
+    tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
+    description = " ".join(tools["claims_settle"].description.split())
+    prompt = " ".join(asyncio.run(server.buyer_flow()).split())
+
+    assert "Normal clearing is automatic" in description
+    assert "must not race" in description
+    assert "clearing_transcripts, then claims_list" in description
+    assert "trigger auction settlement" not in description
+    assert "Background clearing runs automatically" in prompt
+    assert "do not race claims_settle" in prompt
+
+
 def test_clearing_transcript_wrapper_builds_exact_public_query(monkeypatch):
     calls = []
 
     async def fake_get(path, params=None):
         calls.append((path, params))
-        return {"transcripts": [], "round_summaries": [], "total": 0}
+        return {
+            "transcripts": [{
+                "transcript_id": "tr-legacy",
+                "round_index": 2,
+                "signal": {"id": "signal-1"},
+                "copy_cap": 3,
+                "rule_id": "top_n_pay_as_bid",
+                "ranked_bid_ids": [
+                    "bid-1", "bid-2", "bid-3", "bid-4", "bid-5", "bid-6",
+                ],
+                "losers": ["bid-4", "bid-5", "bid-6"],
+                "rejected": ["bid-below-reserve"],
+                "winners": [
+                    {"bid_id": "bid-1", "clearing_price": 1_300_000},
+                    {"bid_id": "bid-2", "clearing_price": 1_200_001},
+                    {"bid_id": "bid-3", "clearing_price": 1_200_000},
+                ],
+                "closed_at": "2026-07-27T12:00:00.000Z",
+            }],
+            "total": 1,
+        }
 
     monkeypatch.setattr(client_wrapper, "_get", fake_get)
     result = asyncio.run(client_wrapper.get_clearing_transcripts(
         "pack-1", signal_id="signal-1", round_index=3, limit=7
     ))
-    assert result["total"] == 0
+    assert result["total"] == 1
+    summary = result["round_summaries"][0]
+    assert summary["winning_prices"] == [1.3, 1.200001, 1.2]
+    assert summary["lowest_winning_price"] == 1.2
+    assert summary["average_winning_price"] == 1.233334
+    assert summary["bid_count"] == 6
+    assert summary["rejected_count"] == 1
+    assert summary["derived_client_side"] is True
+    assert summary["summary_source"] == "agent_kit_client_fallback"
+    assert result["round_summaries_source"] == "agent_kit_client_fallback"
     assert calls == [(
         "/clearing/transcripts",
         {
@@ -899,17 +968,17 @@ def test_skill_validator_skips_binary_example_artifacts(tmp_path):
     assert not validate_skill_bundle.is_text_scan_file(binary_cache)
 
 
-def test_kit_keeps_all_five_stable_version_pins():
+def test_kit_keeps_all_five_v081_version_pins():
     from pathlib import Path
 
     root = Path(__file__).parent.parent
-    assert 'version = "0.8.0"' in (root / "pyproject.toml").read_text()
-    assert 'version = "0.8.0"' in (
+    assert 'version = "0.8.1"' in (root / "pyproject.toml").read_text()
+    assert 'version = "0.8.1"' in (
         root / "accessura_sdk" / "pyproject.toml"
     ).read_text()
-    assert (root / "accessura" / "VERSION").read_text().strip() == "0.8.0"
-    assert "@v0.8.0" in (root / "README.md").read_text()
-    assert "@v0.8.0" in (root / "server.py").read_text()
+    assert (root / "accessura" / "VERSION").read_text().strip() == "0.8.1"
+    assert "@v0.8.1" in (root / "README.md").read_text()
+    assert "@v0.8.1" in (root / "server.py").read_text()
 
 
 def test_broken_repo_external_javascript_examples_are_removed():
@@ -1126,6 +1195,7 @@ def test_ci_paths_cover_expanded_skill_and_funded_gates():
     assert '"examples/**"' in skill_workflow
     assert '"scripts/verify_funded_testnet_evidence.py"' in package_workflow
     assert '"docs/exact-mcp-tool-manifest-v0.8.0.json"' in package_workflow
+    assert '"docs/exact-mcp-tool-manifest-v0.8.1.json"' in package_workflow
 
 
 def test_sdk_publish_rejects_unknown_info_type_before_network(monkeypatch):

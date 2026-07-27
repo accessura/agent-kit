@@ -12,6 +12,7 @@ on:
       - "scripts/verify_funded_testnet_evidence.py"
       - "scripts/prepare_funded_testnet_env.py"
       - "docs/exact-mcp-tool-manifest-v0.8.0.json"
+      - "docs/exact-mcp-tool-manifest-v0.8.1.json"
       - "catalog_contract.py"
       - "tests/**"
       - ".github/workflows/package.yml"

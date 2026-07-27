@@ -3,7 +3,7 @@
 Launch contract:
 
 ```text
-buyer:  discover -> EIP-3009-backed bid -> settle -> award -> seller delivery/payment -> decrypt
+buyer:  discover -> EIP-3009-backed bid -> wait for automatic clear -> transcript -> claim -> seller delivery/payment -> decrypt
 seller: self-custodied payout -> publish -> signal -> award -> wrapped-key delivery
 ```
 
@@ -117,20 +117,22 @@ contract shared with the live API. This identifier is independent from the
 x402 payment network. Active Testnet payment remains `eip155:84532`; do not
 rewrite either constant to make them look the same.
 
-### 3. Clear the round
+### 3. Observe automatic clearing
 
-```http
-POST /api/v1/packs/:id/settle
-Authorization: ApiKey acc_...
+Wait for `round.closes_at`. A background worker clears the round automatically
+shortly after the close, deterministically ranks eligible bids, and assigns up
+to K awards. No Buyer or Seller call is required. Then read
+`clearing_transcripts(pack_id, signal_id)` and `claims_list`.
 
-{"signal_id":"sig-..."}
-```
+`POST /api/v1/packs/:id/settle` remains an optional idempotent
+due-round/deadline sweep for recovery. Calling it is not a race at the close and
+often returns `settled=false` with
+`round_not_due_or_no_pending_bids` for an already-cleared round.
 
-The engine deterministically ranks bids and assigns up to K awards. Clearing
-creates payment intents, not platform HOLDs, and submits no payment. Ranked
-non-winners are terminal transcript evidence; their authorizations are never
-submitted and cannot be promoted. If the seller misses an original award's
-delivery deadline, that signal pauses.
+Clearing creates payment intents, not platform HOLDs, and submits no payment.
+Ranked non-winners are terminal transcript evidence; their authorizations are
+never submitted and cannot be promoted. If the seller misses an original
+award's delivery deadline, that signal pauses.
 
 `paid_delivered_slots` is analytics for completed payments in that round. It never reduces the capacity of future rounds.
 

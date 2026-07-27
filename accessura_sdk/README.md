@@ -17,7 +17,7 @@ packs = buyer.search("election", info_type="structured")
 controls = buyer.payment_readiness()["payment_controls"]
 assert controls["budget_status"] in ("unconfigured", "ready")
 bid = buyer.bid(packs[0]["id"], packs[0]["signals"][0]["id"], 0.15)
-buyer.settle(packs[0]["id"], packs[0]["signals"][0]["id"])
+# Wait until round.closes_at; background clearing is automatic.
 clears = buyer.get_clearing_transcripts(
     packs[0]["id"], signal_id=packs[0]["signals"][0]["id"]
 )

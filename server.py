@@ -2,7 +2,7 @@
 """Accessura MCP Server — buyer + seller tools for the direct x402 API surface.
 
 Usage:
-    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.8.0"
+    pip install "accessura-agent-kit @ git+https://github.com/accessura/agent-kit.git@v0.8.1"
     ACCESSURA_API_KEY=acc_... accessura-mcp              # stdio (Claude Code)
     ACCESSURA_API_KEY=acc_... accessura-mcp --http 3000  # HTTP transport
 
@@ -278,7 +278,7 @@ async def packs_search(
 
 @mcp.tool()
 @safe("packs.get")
-async def packs_get(pack_id: str) -> str:
+async def packs_get(pack_id: str, signal_id: str = "") -> str:
     """Get full details of a specific pack including signals and lifecycle.
 
     Use this to evaluate a pack before bidding: check pricing, bidConfig,
@@ -287,12 +287,15 @@ async def packs_get(pack_id: str) -> str:
     bid_window_state, allowed_actions) that the list endpoint omits.
     last_round is transcript-derived at clearing time. Use it, not salesCount,
     to decide whether a round cleared; salesCount counts only paid deliveries.
+    On a multi-Signal Pack, pass signal_id to select that Signal's latest clear.
+    Without it, last_round is the most recently closed round Pack-wide.
 
     Args:
         pack_id: The pack ID (e.g. "pack-1784133675599-khs9")
+        signal_id: Optional Signal whose latest clearing summary should be read
     """
     cw = _get_client()
-    data = await cw.get_pack(pack_id=pack_id)
+    data = await cw.get_pack(pack_id=pack_id, signal_id=signal_id)
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -308,8 +311,9 @@ async def clearing_transcripts(
 
     Call this after a round closes, especially after losing, before choosing
     the next bid. round_summaries reports decimal-USDC winning prices,
-    lowest/highest/average winning price, bid count, slot count, and close
-    time. The signed transcript remains the immutable audit record.
+    lowest/highest/average winning price, eligible bid count, rejected count,
+    slot count, and close time. The signed transcript remains the immutable
+    audit record.
 
     Args:
         pack_id: Pack whose completed clears should be read.
@@ -589,16 +593,20 @@ async def claims_settle(
     pack_id: str,
     signal_id: str,
 ) -> str:
-    """Trigger auction settlement for a pack's signal (requires auth).
+    """Run an optional idempotent due-round and claim-deadline sweep.
 
-    The engine deterministically picks the seller-configured number of winners
-    for this round based on sealed bids. Settlement creates direct-payment
-    claims; it does not create a platform balance or HOLD. Idempotent — safe
-    to call multiple times.
+    Normal clearing is automatic: the background scheduler closes a due round
+    shortly after round.closes_at without any Buyer or Seller call. Buyers must
+    not race this tool at the deadline or treat it as required for clearing.
+    Use the normal post-close flow: clearing_transcripts, then claims_list.
+
+    This recovery/diagnostic sweep is safe to repeat. Against an already-cleared
+    round it commonly returns settled=false with
+    round_not_due_or_no_pending_bids.
 
     Args:
         pack_id: Target pack ID
-        signal_id: Signal ID to settle
+        signal_id: Sweep scope for one Signal
     """
     _require_auth()
     cw = _get_client()
@@ -956,7 +964,7 @@ async def seller_signal_reopen(pack_id: str, signal_id: str) -> str:
 
 @mcp.prompt()
 async def buyer_flow() -> str:
-    """Complete buyer workflow: discover markets -> find packs -> bid -> settle -> claim -> decrypt."""
+    """Complete buyer workflow: discover -> bid -> automatic clear -> claim -> decrypt."""
     return """Run the complete Accessura buyer flow:
 
 1. Call topics_list to find your current Polymarket-linked Politics or Sports Topic
@@ -968,9 +976,9 @@ async def buyer_flow() -> str:
    0.15 = 15 cents). This is financially binding: the client reads frozen
    payTo/network/asset/SLA terms, checks the standing budget, pre-signs exact
    EIP-3009 plus BidAuthorization locally, and retries once on a round mismatch.
-5. Use bids_status to check round.closes_at. After it elapses, call
-   claims_settle with pack_id and signal_id to trigger auction resolution.
-   Settlement is idempotent — safe to call multiple times.
+5. Use bids_status to check round.closes_at and wait. Background clearing runs
+   automatically shortly after the close; do not race claims_settle or treat it
+   as a Buyer duty. Then call clearing_transcripts with pack_id and signal_id.
 6. If this is a restarted MCP process, call auth_token to refresh the Bearer
    token. Then call claims_list. An award begins in award_pending_delivery. Poll
    every 15-30 seconds until the state advances to paid_delivered. The seller

@@ -132,15 +132,17 @@ not Pack bindings; Sector is not part of the Agent API.
 ## Pack detail
 
 ```
-GET /api/v1/packs/:id
+GET /api/v1/packs/:id?signal_id=sig-...
 ```
 
 Returns the full public pack object including everything from the list response, plus:
 - `salesCount` — completed `paid_delivered` count. It can remain zero after a
   round cleared and must not be used as evidence that no bids won.
-- `last_round` — clearing-time price discovery from the latest signed
-  transcript: Signal/round/close time, bid and slot counts, winner count,
-  winning prices, and low/high/average winning price in decimal USDC.
+- `last_round` — clearing-time price discovery from a signed transcript:
+  Signal/round/close time, eligible bid and rejected counts, slot and winner
+  counts, winning prices, and low/high/average winning price in decimal USDC.
+  Without `signal_id`, the default is the latest closed round Pack-wide. With
+  `signal_id`, it is the latest closed round for that Signal or `null`.
 - `rating`, `lastUpdatedAt` — aggregate stats (only on detail)
 - `lifecycle` — current state machine status (only on detail):
   - `pack_availability`: `"live"` | `"delisted"` | ...
@@ -165,9 +167,14 @@ GET /api/v1/clearing/transcripts
 ```
 
 The raw transcript stays in signed micro-USDC form. `round_summaries[]` is the
-unsigned decimal-USDC price-discovery projection. After losing, use
-`lowest_winning_price` and `bid_count` versus `slot_count` as the competitive
-anchor; the average is context, not a price any winner necessarily paid.
+unsigned decimal-USDC price-discovery projection. Clearing is automatic shortly
+after `round.closes_at`; the normal Buyer flow is wait for the close, read
+`clearing_transcripts`, then read `claims_list`. `claims_settle` is only an
+optional idempotent due-round/deadline sweep, not a clearing race or Buyer duty.
+After losing, use `lowest_winning_price` and eligible `bid_count` versus
+`slot_count` as the competitive anchor. `rejected_count` is separate because
+rejected bids never competed; the average is rounded to six decimal places and
+is context, not a price any winner necessarily paid.
 
 ---
 

@@ -21,6 +21,7 @@
 import base64
 import hashlib
 import json
+import math
 import os
 import secrets
 import threading
@@ -96,6 +97,112 @@ def _maybe_json(text: str) -> dict:
         return json.loads(text)
     except Exception:
         return {"_error": text}
+
+
+def _clearing_string_ids(value: Any) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {
+        entry
+        for entry in value
+        if isinstance(entry, str) and entry
+    }
+
+
+def _derive_clearing_round_summary(transcript: dict) -> dict:
+    winners = [
+        winner for winner in transcript.get("winners", [])
+        if isinstance(winner, dict)
+    ] if isinstance(transcript.get("winners"), list) else []
+    price_micros = sorted(
+        (
+            float(winner["clearing_price"])
+            for winner in winners
+            if (
+                not isinstance(winner.get("clearing_price"), bool)
+                and isinstance(winner.get("clearing_price"), (int, float))
+                and math.isfinite(float(winner["clearing_price"]))
+            )
+        ),
+        reverse=True,
+    )
+    winning_prices = [round(price / 1_000_000, 6) for price in price_micros]
+    rejected_bid_ids = _clearing_string_ids(transcript.get("rejected"))
+    eligible_bid_ids = (
+        _clearing_string_ids(transcript.get("ranked_bid_ids"))
+        | _clearing_string_ids(transcript.get("losers"))
+        | {
+            winner["bid_id"]
+            for winner in winners
+            if isinstance(winner.get("bid_id"), str) and winner["bid_id"]
+        }
+    )
+    eligible_bid_ids -= rejected_bid_ids
+    signal = transcript.get("signal")
+    signal_id = signal.get("id") if isinstance(signal, dict) else None
+    rule_id = transcript.get("rule_id")
+    copy_cap = transcript.get("copy_cap")
+    round_index = transcript.get("round_index")
+    average_price = (
+        round(sum(price_micros) / len(price_micros) / 1_000_000, 6)
+        if price_micros
+        else None
+    )
+    return {
+        "transcript_id": (
+            transcript.get("transcript_id")
+            if isinstance(transcript.get("transcript_id"), str)
+            else ""
+        ),
+        "round_index": (
+            round_index
+            if isinstance(round_index, int) and not isinstance(round_index, bool)
+            else 0
+        ),
+        "signal_id": signal_id if isinstance(signal_id, str) and signal_id else None,
+        "closed_at": (
+            transcript.get("closed_at")
+            if isinstance(transcript.get("closed_at"), str)
+            else ""
+        ),
+        "settlement_rule": (
+            rule_id if isinstance(rule_id, str) and rule_id else "top_n_pay_as_bid"
+        ),
+        "bid_count": len(eligible_bid_ids),
+        "rejected_count": len(rejected_bid_ids),
+        "slot_count": (
+            copy_cap
+            if isinstance(copy_cap, int) and not isinstance(copy_cap, bool)
+            else 0
+        ),
+        "winner_count": len(price_micros),
+        "winning_prices": winning_prices,
+        "lowest_winning_price": winning_prices[-1] if winning_prices else None,
+        "highest_winning_price": winning_prices[0] if winning_prices else None,
+        "average_winning_price": average_price,
+        "derived_client_side": True,
+        "summary_source": "agent_kit_client_fallback",
+    }
+
+
+def _with_clearing_round_summaries(response: dict) -> dict:
+    """Backfill price discovery when talking to a pre-#378 runtime."""
+    if not isinstance(response, dict):
+        return response
+    transcripts = response.get("transcripts")
+    existing = response.get("round_summaries")
+    if isinstance(existing, list) and (existing or not transcripts):
+        return response
+    if not isinstance(transcripts, list):
+        return response
+    out = dict(response)
+    out["round_summaries"] = [
+        _derive_clearing_round_summary(transcript)
+        for transcript in transcripts
+        if isinstance(transcript, dict)
+    ]
+    out["round_summaries_source"] = "agent_kit_client_fallback"
+    return out
 
 
 def _sig_hex(signature) -> str:
@@ -1175,9 +1282,11 @@ class BuyerAgent:
             "GET", f"{self.api}/packs?{'&'.join(params)}",
             self._auth()).get("packs", [])
 
-    def get_pack(self, pack_id: str) -> dict:
-        r = _request("GET",
-                     f"{self.api}/packs/{pack_id}", self._auth())
+    def get_pack(self, pack_id: str, signal_id: str = "") -> dict:
+        path = f"{self.api}/packs/{urllib.parse.quote(pack_id, safe='')}"
+        if signal_id:
+            path += f"?signal_id={urllib.parse.quote(signal_id, safe='')}"
+        r = _request("GET", path, self._auth())
         return r.get("pack", r)
 
     def get_clearing_transcripts(
@@ -1204,11 +1313,12 @@ class BuyerAgent:
             params.append(f"signal_id={urllib.parse.quote(signal_id, safe='')}")
         if round_index is not None:
             params.append(f"round_index={round_index}")
-        return _request(
+        response = _request(
             "GET",
             f"{self.api}/clearing/transcripts?{'&'.join(params)}",
             {},
         )
+        return _with_clearing_round_summaries(response)
 
     def list_packs(self, topic_slug: str = "",
                    limit: int = 20) -> list[dict]:
@@ -1572,9 +1682,11 @@ class SellerAgent:
             "GET", f"{self.api}/packs?{'&'.join(params)}",
             self._auth()).get("packs", [])
 
-    def get_pack(self, pack_id: str) -> dict:
-        r = _request("GET",
-                     f"{self.api}/packs/{pack_id}", self._auth())
+    def get_pack(self, pack_id: str, signal_id: str = "") -> dict:
+        path = f"{self.api}/packs/{urllib.parse.quote(pack_id, safe='')}"
+        if signal_id:
+            path += f"?signal_id={urllib.parse.quote(signal_id, safe='')}"
+        r = _request("GET", path, self._auth())
         return r.get("pack", r)
 
     # ── publishing ────────────────────────────────────────────────────
@@ -1818,9 +1930,11 @@ class HumanBuyer:
         return _request(
             "GET", f"{self.api}{path}", self._auth()).get("packs", [])
 
-    def get_pack(self, pack_id: str) -> dict:
-        r = _request(
-            "GET", f"{self.api}/packs/{pack_id}", self._auth())
+    def get_pack(self, pack_id: str, signal_id: str = "") -> dict:
+        path = f"{self.api}/packs/{urllib.parse.quote(pack_id, safe='')}"
+        if signal_id:
+            path += f"?signal_id={urllib.parse.quote(signal_id, safe='')}"
+        r = _request("GET", path, self._auth())
         return r.get("pack", r)
 
     def list_packs(self, topic_slug: str = "",

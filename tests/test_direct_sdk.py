@@ -352,6 +352,64 @@ def test_buyer_reads_filtered_public_clearing_transcripts(monkeypatch):
         buyer.get_clearing_transcripts("pack-1", limit=True)
 
 
+def test_buyer_derives_price_discovery_against_older_runtime(monkeypatch):
+    def fake_request(method, url, headers, body=None):
+        assert method == "GET"
+        return {
+            "transcripts": [{
+                "transcript_id": "tr-legacy",
+                "round_index": 7,
+                "signal": {"id": "signal-1"},
+                "copy_cap": 3,
+                "ranked_bid_ids": [
+                    "bid-1", "bid-2", "bid-3", "bid-4", "bid-5", "bid-6",
+                ],
+                "losers": ["bid-4", "bid-5", "bid-6"],
+                "rejected": ["bid-below-reserve"],
+                "winners": [
+                    {"bid_id": "bid-1", "clearing_price": 1_300_000},
+                    {"bid_id": "bid-2", "clearing_price": 1_200_000},
+                    {"bid_id": "bid-3", "clearing_price": 1_100_000},
+                ],
+            }],
+        }
+
+    import accessura_sdk.client as client
+    monkeypatch.setattr(client, "_request", fake_request)
+    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://market.example")
+    result = buyer.get_clearing_transcripts("pack-1", signal_id="signal-1")
+    summary = result["round_summaries"][0]
+
+    assert summary["winning_prices"] == [1.3, 1.2, 1.1]
+    assert summary["lowest_winning_price"] == 1.1
+    assert summary["lowest_winning_price"] > 0.9
+    assert summary["average_winning_price"] == 1.2
+    assert summary["bid_count"] == 6
+    assert summary["rejected_count"] == 1
+    assert summary["derived_client_side"] is True
+    assert result["round_summaries_source"] == "agent_kit_client_fallback"
+
+
+def test_pack_detail_accepts_signal_filter(monkeypatch):
+    calls = []
+
+    def fake_request(method, url, headers, body=None):
+        calls.append((method, url, headers, body))
+        return {"pack": {"id": "pack/one", "last_round": None}}
+
+    import accessura_sdk.client as client
+    monkeypatch.setattr(client, "_request", fake_request)
+    buyer = BuyerAgent(PRIVATE_KEY, base_url="https://market.example")
+
+    assert buyer.get_pack("pack/one", signal_id="signal one")["id"] == "pack/one"
+    assert calls == [(
+        "GET",
+        "https://market.example/api/v1/packs/pack%2Fone?signal_id=signal%20one",
+        {},
+        None,
+    )]
+
+
 def test_human_buyer_cannot_submit_unsigned_direct_bid():
     buyer = HumanBuyer("human-1", "buyer@example.com", "unused")
     with pytest.raises(RuntimeError, match="Agent-only"):
