@@ -536,7 +536,9 @@ async def bids_place(
 ) -> str:
     """Place a sealed bid on a pack's signal (buyer only, requires auth).
 
-    Sealed auction: you cannot see other bids. The engine deterministically
+    Other bidders cannot see your live bid, but this is platform-private rather
+    than cryptographic commit-reveal: Accessura receives the price and exact
+    EIP-3009 amount in clear during the window. The engine deterministically
     picks the seller-configured number of winners for this round. bid_price
     must be >= the pack's perCallPrice. This financially binding action signs
     both BidAuthorization and an exact EIP-3009 USDC authorization locally.
@@ -771,6 +773,11 @@ async def claims_deliver(
     envelope and seller-hosted ciphertext URL. Works only for signals uploaded
     via signals.append content_text (managed encryption); self-encrypted content
     needs your own delivery flow.
+
+    The official path performs a mandatory local decrypt preflight against the
+    exact ciphertext before POST. A wrong DEK or content AAD fails locally and
+    triggers no payment. Accessura never receives the DEK/plaintext and cannot
+    prove server-side that a custom Seller wrapped the correct DEK.
 
     All inputs come from claims.list role="seller" plus the content_b64 you
     saved from signals.append. No key material is passed as an argument.

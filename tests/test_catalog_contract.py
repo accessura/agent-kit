@@ -660,6 +660,18 @@ def test_clearing_transcript_tool_and_pack_detail_expose_price_discovery(monkeyp
     assert history["round_summaries"][0]["winning_prices"] == [1.3, 1.2, 1.1]
 
 
+def test_mcp_discloses_platform_private_bids_and_opaque_dek_boundary():
+    tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
+    bid_description = " ".join(tools["bids_place"].description.split())
+    delivery_description = " ".join(tools["claims_deliver"].description.split())
+
+    assert "platform-private" in bid_description
+    assert "cryptographic commit-reveal" in bid_description
+    assert "receives the price" in bid_description
+    assert "mandatory local decrypt preflight" in delivery_description
+    assert "cannot prove server-side" in delivery_description
+
+
 def test_clearing_transcript_wrapper_builds_exact_public_query(monkeypatch):
     calls = []
 
