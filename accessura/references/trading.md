@@ -3,7 +3,7 @@
 Launch contract:
 
 ```text
-buyer:  discover -> EIP-3009-backed bid -> settle -> award -> seller delivery/payment -> decrypt
+buyer:  discover -> EIP-3009-backed bid -> wait for automatic clear -> transcript -> claim -> seller delivery/payment -> decrypt
 seller: self-custodied payout -> publish -> signal -> award -> wrapped-key delivery
 ```
 
@@ -97,9 +97,13 @@ Content-Type: application/json
 }
 ```
 
-The SDK and MCP integrations build this object automatically. `bids_place` is
+The SDK and MCP integrations build this object automatically. Other bidders
+cannot read the live bid, but Accessura receives the price and exact EIP-3009
+amount in clear. This is platform-private bidding, not cryptographic
+commit–reveal. `bids_place` is
 the financial authorization checkpoint: it applies the standing budget before
-signing. The bid is sealed, authenticated, and replay-bound to one round. It
+signing. The bid is hidden from other bidders, authenticated, and replay-bound
+to one round. It
 does not reserve or move money, but it is irrevocable for that round. If it
 wins, seller delivery triggers submission. If the round changes between read
 and POST, refresh both signatures.
@@ -113,20 +117,22 @@ contract shared with the live API. This identifier is independent from the
 x402 payment network. Active Testnet payment remains `eip155:84532`; do not
 rewrite either constant to make them look the same.
 
-### 3. Clear the round
+### 3. Observe automatic clearing
 
-```http
-POST /api/v1/packs/:id/settle
-Authorization: ApiKey acc_...
+Wait for `round.closes_at`. A background worker clears the round automatically
+shortly after the close, deterministically ranks eligible bids, and assigns up
+to K awards. No Buyer or Seller call is required. Then read
+`clearing_transcripts(pack_id, signal_id)` and `claims_list`.
 
-{"signal_id":"sig-..."}
-```
+`POST /api/v1/packs/:id/settle` remains an optional idempotent
+due-round/deadline sweep for recovery. Calling it is not a race at the close and
+often returns `settled=false` with
+`round_not_due_or_no_pending_bids` for an already-cleared round.
 
-The engine deterministically ranks bids and assigns up to K awards. Clearing
-creates payment intents, not platform HOLDs, and submits no payment. Ranked
-non-winners are terminal transcript evidence; their authorizations are never
-submitted and cannot be promoted. If the seller misses an original award's
-delivery deadline, that signal pauses.
+Clearing creates payment intents, not platform HOLDs, and submits no payment.
+Ranked non-winners are terminal transcript evidence; their authorizations are
+never submitted and cannot be promoted. If the seller misses an original
+award's delivery deadline, that signal pauses.
 
 `paid_delivered_slots` is analytics for completed payments in that round. It never reduces the capacity of future rounds.
 
@@ -145,6 +151,11 @@ award_pending_delivery -> paid_delivered
 
 The seller submits a buyer-specific wrapped DEK and ciphertext URL. Only after
 that envelope is durable does the backend submit the winning authorization.
+Accessura validates public envelope structure, claim binding and ciphertext
+hash, but receives neither the Seller's DEK nor plaintext and cannot prove that
+the wrapped DEK opens the ciphertext. `paid_delivered` therefore is not a
+delivery-correctness guarantee, and direct payment leaves no Accessura-held
+funds for a platform refund.
 The claims route is Bearer-only even when an API key is also saved. After an
 MCP restart, call `auth_token`; in the SDK, call `login()` to refresh the JWT
 without issuing another API key.
@@ -280,7 +291,10 @@ Idempotency-Key: delivery-...
 The envelope must bind the claim/buyer and commit to the original ciphertext
 hash. A self-hosted URL must be HTTPS. When the Signal already uploaded opaque
 ciphertext to Accessura, `ciphertext_url` may be omitted and the platform-stored
-opaque artifact is used. Accessura still receives no plaintext or DEK.
+opaque artifact is used. The official SDK/MCP path performs a mandatory local
+decrypt of that exact artifact with the Seller-held DEK before POST; a wrong
+DEK or content AAD fails locally. A custom Seller can bypass this client-side
+control because Accessura still receives no plaintext or DEK.
 
 ### 5. Manage listings
 

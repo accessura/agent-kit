@@ -53,6 +53,7 @@ from accessura_sdk.client import (
     _unknown_payment_controls,
     _usdc_price_base_units,
     _validate_fact_page,
+    _with_clearing_round_summaries,
 )
 
 BASE_URL = os.getenv("ACCESSURA_BASE_URL", "https://testnet.accessura.io").rstrip("/")
@@ -218,8 +219,24 @@ async def search_packs(query: str = "", topic_slug: str = "", info_type: str = "
     return await _get("/packs", params)
 
 
-async def get_pack(pack_id: str) -> dict:
-    return await _get(f"/packs/{_quote(pack_id)}")
+async def get_pack(pack_id: str, signal_id: str = "") -> dict:
+    params = {"signal_id": signal_id} if signal_id else None
+    return await _get(f"/packs/{_quote(pack_id)}", params)
+
+
+async def get_clearing_transcripts(
+    pack_id: str,
+    signal_id: str = "",
+    round_index: Optional[int] = None,
+    limit: int = 10,
+) -> dict:
+    params: dict[str, Any] = {"pack_id": pack_id, "limit": limit}
+    if signal_id:
+        params["signal_id"] = signal_id
+    if round_index is not None:
+        params["round_index"] = round_index
+    response = await _get("/clearing/transcripts", params)
+    return _with_clearing_round_summaries(response)
 
 
 async def publish_pack(pack_data: dict) -> dict:

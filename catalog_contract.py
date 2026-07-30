@@ -16,6 +16,7 @@ EXPECTED_MCP_TOOLS = frozenset({
     "bids_place",
     "bids_status",
     "catalog_get",
+    "clearing_transcripts",
     "claims_decrypt",
     "claims_deliver",
     "claims_list",
@@ -36,8 +37,11 @@ EXPECTED_MCP_TOOLS = frozenset({
     "topics_list",
     "topics_packs",
 })
-EXPECTED_MCP_MANIFEST_SHA256 = (
+V080_MCP_MANIFEST_SHA256 = (
     "640865a8d8f3ae12b8ba29a044ba914ec162df3fe5bfe133a368fbd2b3070969"
+)
+EXPECTED_MCP_MANIFEST_SHA256 = (
+    "67b1d9003ecb2603b4183e14f11cd1a445798e0f57a2394dd86922c7a0e4bf16"
 )
 DELIVERY_FORMATS = {"structured": "json", "text": "markdown", "figure": "image", "video": "video", "audio": "audio"}
 MIN_TOPIC_SLUGS = 1

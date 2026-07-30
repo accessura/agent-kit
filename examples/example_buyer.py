@@ -4,20 +4,16 @@ Example: Accessura buyer agent — full lifecycle.
 
   AGENT_PRIVATE_KEY=0x... python example_buyer.py
 
-Flow: register -> get API key -> search -> signed bid -> settle -> list claims.
+Flow: register -> get API key -> search -> signed bid -> automatic clear -> list claims.
 
-After a seller prepares a claim, payment is an explicit separate action:
+After a seller prepares a binding claim, seller delivery automatically submits
+the bid-time EIP-3009 authorization:
     status = agent.get_payment(claim_id)
-    offer = status["accepts"][0]
-    delivery = agent.pay_claim(
-        claim_id,
-        expected_amount=str(offer["amount"]),
-        expected_pay_to=offer["payTo"],
-    )                                         # Base USDC -> seller
     plaintext = agent.decrypt_paid_claim(claim_id)
 
-Bid and settlement do not reserve or move funds. Real Base USDC payment is
-gated behind ACCESSURA_ALLOW_PAYMENT=1.
+A bid does not reserve or move funds, but it is a binding commitment for the
+round. Clearing is automatic shortly after round.closes_at and submits no
+payment; seller delivery triggers direct Base USDC submission.
 """
 
 import os
@@ -88,13 +84,16 @@ def main():
     except Exception as e:
         print(f"   Bid failed: {e}")
 
-    # 6. Settle (still no payment)
-    print("\n── 6. Settle ──")
+    # 6. Wait for automatic clearing, then inspect the signed transcript
+    print("\n── 6. Automatic clearing ──")
     try:
-        result = agent.settle(target["id"], target_signal["id"])
-        print(f"   Settle: {json.dumps(result, indent=2)[:300]}")
+        print("   Wait until round.closes_at; no settle call is required.")
+        result = agent.get_clearing_transcripts(
+            target["id"], signal_id=target_signal["id"]
+        )
+        print(f"   Transcript: {json.dumps(result, indent=2)[:300]}")
     except Exception as e:
-        print(f"   Settle: {e}")
+        print(f"   Transcript: {e}")
 
     # 7. Check claims
     print("\n── 7. Claims ──")
