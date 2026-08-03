@@ -44,6 +44,7 @@ from typing import Annotated, Literal, Optional
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
+from accessura_sdk.errors import AccessuraAuthError, AccessuraErrorCode
 from catalog_contract import (
     normalize_signal_schema,
     normalize_topic_slugs,
@@ -69,10 +70,11 @@ def _get_client():
 def _require_auth():
     cw = _get_client()
     if not cw._has_auth():
-        raise RuntimeError(
+        raise AccessuraAuthError(
             "Authentication required. Set ACCESSURA_API_KEY or ACCESSURA_TOKEN env var, "
             "or run auth.register then auth.apikey (needs ACCESSURA_PRIVATE_KEY). "
-            "See authentication.md for details."
+            "See authentication.md for details.",
+            code=AccessuraErrorCode.MISSING_API_KEY,
         )
 
 
@@ -91,7 +93,13 @@ def safe(tool_name: str):
                 return await handler(*args, **kwargs)
             except Exception as e:
                 msg = str(e) if isinstance(e, RuntimeError) else f"{type(e).__name__}: {e}"
-                return json.dumps({"error": msg, "tool": tool_name}, indent=2)
+                error_obj: dict = {"error": msg, "tool": tool_name}
+                # Include structured error code when available (AccessuraError taxonomy)
+                if hasattr(e, "code") and hasattr(e, "to_dict"):
+                    error_obj["code"] = e.code.value  # type: ignore[union-attr]
+                    if getattr(e, "status_code", None) is not None:
+                        error_obj["status_code"] = e.status_code  # type: ignore[union-attr]
+                return json.dumps(error_obj, indent=2)
         return wrapper
     return decorator
 

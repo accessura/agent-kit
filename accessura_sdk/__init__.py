@@ -22,5 +22,6 @@ Crypto utilities (standalone, pure functions):
 
 from .client import BuyerAgent, SellerAgent
 from . import crypto
+from . import errors
 
-__all__ = ["BuyerAgent", "SellerAgent", "crypto"]
+__all__ = ["BuyerAgent", "SellerAgent", "crypto", "errors"]

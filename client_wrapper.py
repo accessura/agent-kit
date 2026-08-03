@@ -26,6 +26,15 @@ from urllib.parse import quote
 
 import httpx
 
+from accessura_sdk.errors import (
+    AccessuraAuthError,
+    AccessuraCryptoError,
+    AccessuraError,
+    AccessuraErrorCode,
+    AccessuraNetworkError,
+    AccessuraPaymentError,
+    AccessuraValidationError,
+)
 from accessura_sdk.crypto import (
     ECIES_ALG,
     decrypt_delivery,
@@ -37,21 +46,28 @@ from accessura_sdk.crypto import (
 )
 from accessura_sdk.client import (
     DEFAULT_X402_NETWORK,
+    PollOptions,
+    _is_transient_http_status,
+    _poll_backoff,
+)
+from accessura_sdk._signing import (
     _assert_safe_auth_challenge,
-    _base_payment_controls,
     _attach_payment_risk_warnings,
     _binding_bid_sla_risk_warnings,
+    _sign_bid_authorization,
+    _sign_bid_payment_authorization,
+    _sign_x402_payment,
+    _usdc_price_base_units,
+)
+from accessura_sdk._payment_controls import (
+    _base_payment_controls,
     _enforce_payment_controls,
     _local_payment_controls,
     _payment_control_config,
     _payment_readiness,
     _public_payment_controls,
-    _sign_bid_authorization,
-    _sign_bid_payment_authorization,
-    _sign_x402_payment,
     _summarize_payment_controls,
     _unknown_payment_controls,
-    _usdc_price_base_units,
     _validate_fact_page,
 )
 
@@ -98,9 +114,10 @@ def _auth_headers() -> dict[str, str]:
 def _bearer_auth_headers() -> dict[str, str]:
     """Bearer auth for the deployed claim-list route, which is JWT-only."""
     if not TOKEN:
-        raise RuntimeError(
+        raise AccessuraAuthError(
             "Bearer token required for claims_list. Run auth_token to create a "
-            "fresh in-process session token (or set ACCESSURA_TOKEN)."
+            "fresh in-process session token (or set ACCESSURA_TOKEN).",
+            code=AccessuraErrorCode.TOKEN_REQUIRED,
         )
     return {"Authorization": f"Bearer {TOKEN}"}
 
@@ -111,24 +128,29 @@ def _has_auth() -> bool:
 
 def _require_private_key() -> str:
     if not PRIVATE_KEY:
-        raise RuntimeError(
+        raise AccessuraAuthError(
             "ACCESSURA_PRIVATE_KEY env var required for this operation. "
-            "Set it in the MCP server environment (never pass keys as tool arguments)."
+            "Set it in the MCP server environment (never pass keys as tool arguments).",
+            code=AccessuraErrorCode.MISSING_API_KEY,
         )
     return PRIVATE_KEY
 
 
 def _require_delivery_secret() -> bytes:
     if not DELIVERY_SECRET:
-        raise RuntimeError(
+        raise AccessuraCryptoError(
             "ACCESSURA_DELIVERY_SECRET is required for managed seller encryption. "
-            "Set a dedicated 32-byte hex secret; never reuse ACCESSURA_PRIVATE_KEY."
+            "Set a dedicated 32-byte hex secret; never reuse ACCESSURA_PRIVATE_KEY.",
+            code=AccessuraErrorCode.KEY_MATERIAL_INVALID,
         )
     secret = normalize_delivery_secret(DELIVERY_SECRET)
     if PRIVATE_KEY:
         wallet_hex = PRIVATE_KEY[2:] if PRIVATE_KEY.lower().startswith("0x") else PRIVATE_KEY
         if secret == bytes.fromhex(wallet_hex):
-            raise RuntimeError("ACCESSURA_DELIVERY_SECRET must not equal ACCESSURA_PRIVATE_KEY")
+            raise AccessuraCryptoError(
+                "ACCESSURA_DELIVERY_SECRET must not equal ACCESSURA_PRIVATE_KEY",
+                code=AccessuraErrorCode.KEY_MATERIAL_INVALID,
+            )
     return secret
 
 
@@ -138,7 +160,10 @@ def _account():
     try:
         from eth_account.account import Account
     except ImportError as e:  # pragma: no cover
-        raise RuntimeError("eth-account not installed — pip install eth-account") from e
+        raise AccessuraAuthError(
+            "eth-account not installed — pip install eth-account",
+            code=AccessuraErrorCode.ETH_ACCOUNT_NOT_INSTALLED,
+        ) from e
     return Account.from_key(PRIVATE_KEY)
 
 
@@ -149,7 +174,10 @@ async def _req(method: str, path: str, *, params: Optional[dict] = None,
     status, _, data = await _req_response(
         method, path, params=params, body=body, extra_headers=extra_headers)
     if status >= 400:
-        raise RuntimeError(f"HTTP {status} {method} {path}: {json.dumps(data)[:300]}")
+        raise AccessuraNetworkError(
+            f"HTTP {status} {method} {path}: {json.dumps(data)[:300]}",
+            code=AccessuraErrorCode.HTTP_ERROR,
+            status_code=status)
     return data
 
 
@@ -260,8 +288,10 @@ async def _collect_financial_pages(
         status, _, page = await _req_response(
             "GET", "/transactions", params=params)
         if status >= 400:
-            raise RuntimeError(
-                f"financial facts API unavailable: HTTP {status} {page}")
+            raise AccessuraNetworkError(
+                f"financial facts API unavailable: HTTP {status} {page}",
+                code=AccessuraErrorCode.FACTS_UNAVAILABLE,
+                status_code=status)
         _validate_fact_page(page, view)
         pages.append(page)
         if not page["has_more"]:
@@ -297,14 +327,17 @@ async def place_bid(pack_id: str, bid_data: dict) -> dict:
     signal_id = str(bid_data.get("signal_id") or "")
     price = float(bid_data.get("bid_price"))
     if not signal_id:
-        raise RuntimeError("signal_id is required for a direct signed bid")
+        raise AccessuraValidationError(
+            "signal_id is required for a direct signed bid",
+            code=AccessuraErrorCode.MISSING_PARAMETER)
     bid_amount = _usdc_price_base_units(price)
     async with _payment_authority_lock():
         if bid_data.get("authorization"):
             if not bid_data.get("payment_authorization"):
-                raise RuntimeError(
+                raise AccessuraValidationError(
                     "a caller-supplied BidAuthorization must include its "
-                    "payment_authorization")
+                    "payment_authorization",
+                    code=AccessuraErrorCode.MISSING_PARAMETER)
             status = await get_bid_status(pack_id, signal_id)
             payment_terms = status.get("payment_terms")
             network = str((payment_terms or {}).get("network", ""))
@@ -366,8 +399,10 @@ async def place_bid(pack_id: str, bid_data: dict) -> dict:
                 response.get("error_code") != "BID_AUTHORIZATION_MISMATCH"
                 or attempt == 1
             ):
-                raise RuntimeError(
-                    f"HTTP {code} POST /packs/{pack_id}/bid: {response}")
+                raise AccessuraPaymentError(
+                    f"HTTP {code} POST /packs/{pack_id}/bid: {response}",
+                    code=AccessuraErrorCode.PAYMENT_FAILED,
+                    status_code=code)
     raise RuntimeError("unreachable bid retry state")
 
 
@@ -389,6 +424,102 @@ async def payment_readiness(network: str = DEFAULT_X402_NETWORK) -> dict:
     readiness["signing_ready"] = controls["budget_status"] in (
         "unconfigured", "ready")
     return readiness
+
+
+# ── Polling helpers (async, inspired by @beep-it/sdk-core) ─────────────────
+
+async def wait_for_bid_settled(
+    pack_id: str,
+    signal_id: str = "",
+    *,
+    interval_ms: int = 15_000,
+    timeout_ms: int = 300_000,
+) -> dict:
+    """Poll bid status until the round settles or times out.
+
+    Async wrapper for the MCP server. Uses exponential backoff on transient
+    errors (1.5x multiplier, 60 s cap).
+    """
+    import asyncio
+    import time as _time
+
+    options = PollOptions(interval_ms=interval_ms, timeout_ms=timeout_ms)
+    deadline = _time.monotonic() + timeout_ms / 1000.0
+    current_interval = options.interval_ms
+    last: dict = {}
+
+    while _time.monotonic() < deadline:
+        try:
+            last = await get_bid_status(pack_id, signal_id)
+            status_val = last.get("status", "")
+            if status_val in (
+                "won", "lost", "cleared", "settled",
+                "cancelled", "expired", "rejected",
+            ):
+                return last
+            current_interval = options.interval_ms
+        except Exception:
+            current_interval = _poll_backoff(current_interval, options)
+
+        await asyncio.sleep(current_interval / 1000.0)
+
+    return last or {"status": "poll_timeout", "error": "bid status poll timed out"}
+
+
+async def wait_for_claim_paid(
+    claim_id: str,
+    *,
+    expected_amount: Optional[str] = None,
+    expected_pay_to: Optional[str] = None,
+    interval_ms: int = 15_000,
+    timeout_ms: int = 300_000,
+) -> dict:
+    """Poll claim payment until paid or timed out.
+
+    When the claim reaches payable state (HTTP 402), automatically calls
+    ``pay_claim`` if ``expected_amount`` / ``expected_pay_to`` are bound.
+    """
+    import asyncio
+    import time as _time
+
+    options = PollOptions(interval_ms=interval_ms, timeout_ms=timeout_ms)
+    deadline = _time.monotonic() + timeout_ms / 1000.0
+    current_interval = options.interval_ms
+    last: dict = {}
+
+    while _time.monotonic() < deadline:
+        try:
+            last = await get_claim_payment(claim_id)
+            http_status = last.get("_http_status")
+
+            if http_status in (200, 202):
+                return last
+
+            if http_status == 402:
+                if expected_amount is not None or expected_pay_to is not None:
+                    last = await pay_claim(
+                        claim_id,
+                        expected_amount=expected_amount,
+                        expected_pay_to=expected_pay_to,
+                    )
+                    if last.get("_http_status") in (200, 202):
+                        return last
+                    paid_status = last.get("_http_status", 0)
+                    if _is_transient_http_status(paid_status):
+                        current_interval = _poll_backoff(current_interval, options)
+                        await asyncio.sleep(current_interval / 1000.0)
+                        continue
+                    return last
+                return last
+
+            current_interval = options.interval_ms
+        except Exception:
+            current_interval = _poll_backoff(current_interval, options)
+
+        await asyncio.sleep(current_interval / 1000.0)
+
+    return last or {"_http_status": 0,
+                    "error": "claim payment poll timed out"}
 
 
 # ── Claims & Settlement ──────────────────────────────────────────────────
@@ -428,8 +559,10 @@ async def pay_claim(claim_id: str, expected_amount: Optional[str] = None,
         if status in (200, 202):
             return {**required, "_http_status": status}
         if status != 402:
-            raise RuntimeError(
-                f"HTTP {status} GET /claims/{claim_id}/pay: {required}")
+            raise AccessuraPaymentError(
+                f"HTTP {status} GET /claims/{claim_id}/pay: {required}",
+                code=AccessuraErrorCode.PAYMENT_REQUIRED_MALFORMED,
+                status_code=status)
         accepts = required.get("accepts")
         network = (
             str(accepts[0].get("network", ""))
@@ -449,8 +582,10 @@ async def pay_claim(claim_id: str, expected_amount: Optional[str] = None,
             "POST", f"/claims/{_quote(claim_id)}/pay", body={},
             extra_headers={"PAYMENT-SIGNATURE": payment_header})
         if paid_status >= 400:
-            raise RuntimeError(
-                f"HTTP {paid_status} POST /claims/{claim_id}/pay: {paid}")
+            raise AccessuraPaymentError(
+                f"HTTP {paid_status} POST /claims/{claim_id}/pay: {paid}",
+                code=AccessuraErrorCode.PAYMENT_FAILED,
+                status_code=paid_status)
         return {**paid, "_http_status": paid_status}
 
 
@@ -468,7 +603,10 @@ async def fetch_paid_ciphertext(ciphertext_url: str) -> dict:
                 headers={"User-Agent": "Accessura-MCP/0.7"},
             )
         if response.status_code >= 400:
-            raise RuntimeError(f"HTTP {response.status_code} ciphertext fetch: {response.text[:300]}")
+            raise AccessuraNetworkError(
+                f"HTTP {response.status_code} ciphertext fetch: {response.text[:300]}",
+                code=AccessuraErrorCode.CIPHERTEXT_FETCH_FAILED,
+                status_code=response.status_code)
         return response.json()
     prefix = f"{BASE_URL}/api/v1"
     path = ciphertext_url[len(prefix):] if ciphertext_url.startswith(prefix) else target.path
@@ -497,7 +635,9 @@ async def bind_seller_payout_wallet(chain: str = DEFAULT_X402_NETWORK) -> dict:
     challenge = challenge_result.get("challenge") or {}
     payload = challenge.get("sign_payload")
     if not payload:
-        raise RuntimeError(f"seller payout challenge failed: {challenge_result}")
+        raise AccessuraAuthError(
+            f"seller payout challenge failed: {challenge_result}",
+            code=AccessuraErrorCode.PAYOUT_BIND_FAILED)
     signature = _sign_typed_payload(payload)
     return await _post("/sellers/payout-wallet/verify", {
         "challenge_id": challenge.get("challenge_id"),
@@ -521,15 +661,21 @@ async def update_seller_readiness(
     """Pause/resume Seller delivery or update the listing-visible SLA."""
     normalized_status = status.strip().lower()
     if normalized_status and normalized_status not in {"active", "paused"}:
-        raise RuntimeError("status must be active or paused")
+        raise AccessuraValidationError(
+            "status must be active or paused",
+            code=AccessuraErrorCode.INVALID_PARAMETER)
     if sla_seconds is not None and (
         isinstance(sla_seconds, bool)
         or not isinstance(sla_seconds, int)
         or not 30 <= sla_seconds <= 86_400
     ):
-        raise RuntimeError("sla_seconds must be an integer from 30 to 86400")
+        raise AccessuraValidationError(
+            "sla_seconds must be an integer from 30 to 86400",
+            code=AccessuraErrorCode.INVALID_PARAMETER)
     if not normalized_status and sla_seconds is None:
-        raise RuntimeError("status or sla_seconds required")
+        raise AccessuraValidationError(
+            "status or sla_seconds required",
+            code=AccessuraErrorCode.MISSING_PARAMETER)
     body: dict[str, Any] = {}
     if normalized_status:
         body["status"] = normalized_status
@@ -594,7 +740,9 @@ async def get_api_key() -> dict:
     ch = data.get("challenge") or {}
     payload = ch.get("sign_payload")
     if not payload:
-        raise RuntimeError(f"apikey challenge failed: {data.get('error') or data}")
+        raise AccessuraAuthError(
+            f"apikey challenge failed: {data.get('error') or data}",
+            code=AccessuraErrorCode.AUTH_CHALLENGE_FAILED)
     signature = _sign_typed_payload(payload)
     out = await _post("/auth/apikey", {
         "agent_id": agent_id,
@@ -603,7 +751,9 @@ async def get_api_key() -> dict:
         "action": "exchange",
     })
     if not out.get("api_key"):
-        raise RuntimeError(f"apikey exchange failed: {out.get('error') or out}")
+        raise AccessuraAuthError(
+            f"apikey exchange failed: {out.get('error') or out}",
+            code=AccessuraErrorCode.APIKEY_EXCHANGE_FAILED)
     set_credentials(api_key=out["api_key"], token=out.get("token", ""))
     if not TOKEN:
         # /claims is Bearer-only; cache an immediate session token so claim
@@ -624,7 +774,9 @@ async def get_session_token() -> dict:
     ch = data.get("challenge") or {}
     payload = ch.get("sign_payload")
     if not payload:
-        raise RuntimeError(f"token challenge failed: {data.get('error') or data}")
+        raise AccessuraAuthError(
+            f"token challenge failed: {data.get('error') or data}",
+            code=AccessuraErrorCode.AUTH_CHALLENGE_FAILED)
     signature = _sign_typed_payload(payload)
     out = await _post("/auth/token", {
         "agent_id": agent_id,
@@ -632,7 +784,9 @@ async def get_session_token() -> dict:
         "signature": signature,
     })
     if not out.get("token"):
-        raise RuntimeError(f"token exchange failed: {out.get('error') or out}")
+        raise AccessuraAuthError(
+            f"token exchange failed: {out.get('error') or out}",
+            code=AccessuraErrorCode.TOKEN_EXCHANGE_FAILED)
     set_credentials(token=out["token"])
     return out
 
